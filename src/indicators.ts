@@ -29,6 +29,15 @@ const FORMATS: Record<string, Format> = {
   hicp: { kind: "rate", decimals: 1, monthly: true },
   estr: { kind: "rate", decimals: 3, monthly: false },
   yield_10y: { kind: "rate", decimals: 2, monthly: false },
+  // Taux à 10 ans par pays (groupe « yields »), moyennes mensuelles en %.
+  yield_de: { kind: "rate", decimals: 2, monthly: true },
+  yield_fr: { kind: "rate", decimals: 2, monthly: true },
+  yield_it: { kind: "rate", decimals: 2, monthly: true },
+  yield_es: { kind: "rate", decimals: 2, monthly: true },
+  yield_gr: { kind: "rate", decimals: 2, monthly: true },
+  yield_pt: { kind: "rate", decimals: 2, monthly: true },
+  yield_be: { kind: "rate", decimals: 2, monthly: true },
+  yield_nl: { kind: "rate", decimals: 2, monthly: true },
   eurusd: { kind: "fx", decimals: 4, monthly: false },
   unemployment: { kind: "rate", decimals: 1, monthly: true },
   // V3 : masqués par défaut (à afficher dans « Indicateurs affichés »).
@@ -72,7 +81,7 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
     },
     yield_10y: {
       label: "Taux souverain 10 ans",
-      hint: "Courbe des taux de la BCE, emprunts d'État de la zone euro, toutes notations.",
+      hint: "Taux à 10 ans de l'ensemble des États de la zone euro, toutes notations (Allemagne, France, Italie…), estimé chaque jour par la BCE.",
       explanation:
         "Coût d'emprunt à 10 ans des États de la zone euro. Il reflète les taux et l'inflation attendus, et sert de repère aux crédits immobiliers.",
     },
@@ -119,10 +128,51 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
         "Reflète d'abord le marché immobilier, qui réagit vite aux taux des crédits : un bon thermomètre de la politique monétaire.",
     },
     real_rate: {
-      label: "Taux réel",
-      hint: "Taux de dépôt de la BCE moins l'inflation sur 1 an : le coût de l'argent une fois l'inflation déduite.",
+      label: "Taux directeur réel",
+      hint: "Taux de dépôt de la BCE moins l'inflation sur 1 an (taux réel ex post) : le coût de l'argent une fois l'inflation déduite.",
       explanation:
         "Taux de dépôt moins inflation. Négatif, la politique monétaire reste accommodante même quand les taux montent ; positif, elle freine vraiment l'économie.",
+    },
+    // Taux à 10 ans par pays (groupe « yields ») : l'explication est celle du groupe.
+    yield_de: {
+      label: "Allemagne",
+      hint: "Bund : taux d'emprunt à 10 ans de l'Allemagne, moyenne du mois.",
+      explanation: "",
+    },
+    yield_fr: {
+      label: "France",
+      hint: "OAT : taux d'emprunt à 10 ans de la France, moyenne du mois.",
+      explanation: "",
+    },
+    yield_it: {
+      label: "Italie",
+      hint: "BTP : taux d'emprunt à 10 ans de l'Italie, moyenne du mois.",
+      explanation: "",
+    },
+    yield_es: {
+      label: "Espagne",
+      hint: "Bonos : taux d'emprunt à 10 ans de l'Espagne, moyenne du mois.",
+      explanation: "",
+    },
+    yield_gr: {
+      label: "Grèce",
+      hint: "GGB : taux d'emprunt à 10 ans de la Grèce, moyenne du mois.",
+      explanation: "",
+    },
+    yield_pt: {
+      label: "Portugal",
+      hint: "OT : taux d'emprunt à 10 ans du Portugal, moyenne du mois.",
+      explanation: "",
+    },
+    yield_be: {
+      label: "Belgique",
+      hint: "OLO : taux d'emprunt à 10 ans de la Belgique, moyenne du mois.",
+      explanation: "",
+    },
+    yield_nl: {
+      label: "Pays-Bas",
+      hint: "DSL : taux d'emprunt à 10 ans des Pays-Bas, moyenne du mois.",
+      explanation: "",
     },
     spread_fr: {
       label: "France",
@@ -160,10 +210,10 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation: "",
     },
     slope: {
-      label: "Pente 10 ans − €STR",
-      hint: "Écart entre le taux souverain 10 ans et le taux au jour le jour, en points de base.",
+      label: "Pente 2-10 ans",
+      hint: "Taux à 10 ans moins taux à 2 ans des États notés AAA (courbe de la BCE), en points de base.",
       explanation:
-        "Écart entre taux longs et courts. Une pente négative (courbe inversée) a souvent précédé les ralentissements ; en hausse, elle reflète des attentes de croissance.",
+        "La pente de la courbe des taux. Positive, c'est la norme ; négative (courbe inversée), les marchés attendent des baisses de taux, souvent avant un ralentissement.",
     },
   },
   en: {
@@ -187,7 +237,7 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
     },
     yield_10y: {
       label: "10-year sovereign yield",
-      hint: "ECB yield curve, euro area government bonds, all ratings.",
+      hint: "10-year rate across all euro area governments, all ratings (Germany, France, Italy…), estimated daily by the ECB.",
       explanation:
         "What euro area governments pay to borrow for 10 years. It reflects expected rates and inflation, and is a benchmark for mortgages.",
     },
@@ -234,10 +284,50 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
         "Mainly reflects the housing market, which reacts quickly to mortgage rates: a good gauge of monetary policy.",
     },
     real_rate: {
-      label: "Real rate",
-      hint: "ECB deposit rate minus annual inflation: the cost of money after inflation.",
+      label: "Real policy rate",
+      hint: "ECB deposit rate minus annual inflation (ex post real rate): the cost of money after inflation.",
       explanation:
         "Deposit rate minus inflation. When negative, policy stays accommodative even as rates rise; when positive, it genuinely holds the economy back.",
+    },
+    yield_de: {
+      label: "Germany",
+      hint: "Bund: Germany's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_fr: {
+      label: "France",
+      hint: "OAT: France's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_it: {
+      label: "Italy",
+      hint: "BTP: Italy's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_es: {
+      label: "Spain",
+      hint: "Bonos: Spain's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_gr: {
+      label: "Greece",
+      hint: "GGB: Greece's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_pt: {
+      label: "Portugal",
+      hint: "OT: Portugal's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_be: {
+      label: "Belgium",
+      hint: "OLO: Belgium's 10-year borrowing rate, monthly average.",
+      explanation: "",
+    },
+    yield_nl: {
+      label: "Netherlands",
+      hint: "DSL: the Netherlands' 10-year borrowing rate, monthly average.",
+      explanation: "",
     },
     spread_fr: {
       label: "France",
@@ -275,10 +365,10 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation: "",
     },
     slope: {
-      label: "Slope 10Y − €STR",
-      hint: "Spread between the 10-year sovereign yield and the overnight rate, in basis points.",
+      label: "2-10Y slope",
+      hint: "AAA-rated governments' 10-year rate minus their 2-year rate (ECB yield curve), in basis points.",
       explanation:
-        "Gap between long and short rates. A negative slope (inverted curve) has often come before slowdowns; a rising slope reflects growth expectations.",
+        "The slope of the yield curve. Positive is the norm; negative (inverted curve) means markets expect rate cuts, often ahead of a slowdown.",
     },
   },
 };
@@ -309,6 +399,16 @@ export type GroupDisplay = {
 
 /** Membres possibles de chaque groupe, dans l'ordre d'affichage (le même que dans Rust). */
 const GROUP_CANDIDATES: Record<string, GroupCandidate[]> = {
+  yields: [
+    { id: "yield_de", code: "DE" },
+    { id: "yield_fr", code: "FR" },
+    { id: "yield_it", code: "IT" },
+    { id: "yield_es", code: "ES" },
+    { id: "yield_gr", code: "GR" },
+    { id: "yield_pt", code: "PT" },
+    { id: "yield_be", code: "BE" },
+    { id: "yield_nl", code: "NL" },
+  ],
   spreads: [
     { id: "spread_fr", code: "FR" },
     { id: "spread_it", code: "IT" },
@@ -324,7 +424,13 @@ const GROUP_CANDIDATES: Record<string, GroupCandidate[]> = {
 const MEMBER_COLORS = ["#c9a24a", "#f5f1e8", "#7fa2c9"];
 
 /** Membres choisis par l'utilisateur, par groupe (envoyés par Rust ; voir `setGroupSelection`). */
-const selection: Record<string, string[]> = { spreads: ["spread_fr", "spread_it", "spread_es"] };
+const selection: Record<string, string[]> = {
+  yields: ["yield_de", "yield_fr", "yield_it"],
+  spreads: ["spread_fr", "spread_it", "spread_es"],
+};
+
+/** Nombre maximal de pays par ligne (place disponible ; même limite dans Rust). */
+export const MAX_MEMBERS = 3;
 
 /** Retient les membres affichés d'un groupe (ex. pays des écarts de taux). */
 export function setGroupSelection(groupId: string, ids: string[]): void {
@@ -338,6 +444,13 @@ export function groupCandidates(groupId: string): GroupCandidate[] {
 
 const GROUP_TEXTS: Record<Lang, Record<string, Pick<GroupDisplay, "label" | "short" | "hint" | "explanation">>> = {
   fr: {
+    yields: {
+      label: "Taux à 10 ans par pays",
+      short: "Taux 10 ans par pays",
+      hint: "Taux d'emprunt à 10 ans de chaque État, en %. Moyennes mensuelles (statistiques de convergence de la BCE).",
+      explanation:
+        "Ce que paie chaque État pour emprunter sur 10 ans. Plus il dépasse l'Allemagne, plus les marchés exigent une prime pour lui prêter.",
+    },
     spreads: {
       label: "Écarts de taux à 10 ans",
       short: "Écarts vs Allemagne",
@@ -347,6 +460,13 @@ const GROUP_TEXTS: Record<Lang, Record<string, Pick<GroupDisplay, "label" | "sho
     },
   },
   en: {
+    yields: {
+      label: "10-year yields by country",
+      short: "10Y yields by country",
+      hint: "Each government's 10-year borrowing rate, in %. Monthly averages (ECB convergence statistics).",
+      explanation:
+        "What each government pays to borrow over 10 years. The further it sits above Germany, the bigger the premium markets demand to lend to it.",
+    },
     spreads: {
       label: "10-year spreads",
       short: "Spreads vs Germany",
@@ -365,7 +485,65 @@ export function groupFor(id: string): GroupDisplay | undefined {
   const chosen = selection[id] ?? [];
   const members = candidates
     .filter((candidate) => chosen.includes(candidate.id))
-    .slice(0, MEMBER_COLORS.length)
+    .slice(0, MAX_MEMBERS)
     .map((candidate, k) => ({ ...candidate, color: MEMBER_COLORS[k] }));
   return { ...texts, members };
+}
+
+// ---------- Courbe des taux ----------
+// Une ligne du panneau (groupe « curve » côté Rust) : la courbe du jour en mini-graphique et
+// l'écart 10 ans − 2 ans ; en vue détail, la courbe du jour et celle d'il y a 1 ou 5 ans.
+
+/** Identifiant de la ligne « Courbe des taux ». */
+export const CURVE_ID = "curve";
+
+/** Une échéance : série BCE, code court (axe) et nom (survol). */
+export type Tenor = { id: string; code: Record<Lang, string>; name: Record<Lang, string> };
+
+/** Échéances, de la plus courte à la plus longue (même ordre que `CURVE` dans store.rs). */
+export const CURVE_TENORS: Tenor[] = [
+  { id: "yc_3m", code: { fr: "3M", en: "3M" }, name: { fr: "3 mois", en: "3 months" } },
+  { id: "yc_6m", code: { fr: "6M", en: "6M" }, name: { fr: "6 mois", en: "6 months" } },
+  { id: "yc_1y", code: { fr: "1A", en: "1Y" }, name: { fr: "1 an", en: "1 year" } },
+  { id: "yc_2y", code: { fr: "2A", en: "2Y" }, name: { fr: "2 ans", en: "2 years" } },
+  { id: "yc_3y", code: { fr: "3A", en: "3Y" }, name: { fr: "3 ans", en: "3 years" } },
+  { id: "yc_5y", code: { fr: "5A", en: "5Y" }, name: { fr: "5 ans", en: "5 years" } },
+  { id: "yc_7y", code: { fr: "7A", en: "7Y" }, name: { fr: "7 ans", en: "7 years" } },
+  { id: "yc_10y", code: { fr: "10A", en: "10Y" }, name: { fr: "10 ans", en: "10 years" } },
+  { id: "yc_15y", code: { fr: "15A", en: "15Y" }, name: { fr: "15 ans", en: "15 years" } },
+  { id: "yc_20y", code: { fr: "20A", en: "20Y" }, name: { fr: "20 ans", en: "20 years" } },
+  { id: "yc_30y", code: { fr: "30A", en: "30Y" }, name: { fr: "30 ans", en: "30 years" } },
+];
+
+const CURVE_TEXTS: Record<Lang, { label: string; hint: string; explanation: string }> = {
+  fr: {
+    label: "Courbe des taux AAA",
+    hint: "Taux d'emprunt des États de la zone euro notés AAA, de 3 mois à 30 ans (taux zéro coupon calculés par la BCE).",
+    explanation:
+      "Ce qu'il coûte d'emprunter selon la durée. Une courbe inversée (court plus cher que long) annonce souvent des baisses de taux et un ralentissement.",
+  },
+  en: {
+    label: "AAA yield curve",
+    hint: "Borrowing rates of AAA-rated euro area governments, 3 months to 30 years (zero-coupon rates estimated by the ECB).",
+    explanation:
+      "What it costs to borrow depending on the length. An inverted curve (short above long) often signals rate cuts and a slowdown ahead.",
+  },
+};
+
+/** Présentation de la courbe : textes et format des taux (en %, 2 décimales). */
+export function curveDisplay(): Display {
+  return { ...CURVE_TEXTS[lang()], kind: "rate", decimals: 2, monthly: false };
+}
+
+/** Présentation de la pente 2-10 ans (indicateur calculé « slope », en points de base). */
+export function curveSlopeDisplay(): Display | undefined {
+  return displayFor("slope");
+}
+
+export function tenorCode(tenor: Tenor): string {
+  return tenor.code[lang()];
+}
+
+export function tenorName(tenor: Tenor): string {
+  return tenor.name[lang()];
 }

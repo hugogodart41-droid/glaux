@@ -7,9 +7,10 @@
 // sont à côté, dans prefs.json.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -32,6 +33,9 @@ const HISTORY_MONTHS: u32 = 5 * 12 + 1;
 
 /// Période maximale affichable dans la vue détail.
 pub const MAX_DETAIL_MONTHS: u32 = 5 * 12;
+
+/// Téléchargements simultanés (29 séries : une à une, l'actualisation prendrait trop longtemps).
+const PARALLEL_DOWNLOADS: usize = 4;
 
 /// Version du format du fichier cache. À augmenter si sa structure change.
 const CACHE_VERSION: u32 = 1;
@@ -71,8 +75,10 @@ struct Prefs {
     hidden: Vec<String>,
     /// Lignes masquées par défaut (`DEFAULT_HIDDEN`) que l'utilisateur a affichées.
     shown: Vec<String>,
-    /// Pays affichés dans la ligne des écarts de taux (ex. « spread_fr ») ; vide : `DEFAULT_SPREADS`.
+    /// Pays affichés dans la ligne des écarts de taux (ex. « spread_fr ») ; vide : choix par défaut.
     spreads: Vec<String>,
+    /// Pays affichés dans la ligne des taux à 10 ans par pays (ex. « yield_fr ») ; vide : choix par défaut.
+    yields: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -85,6 +91,7 @@ impl Default for Prefs {
             hidden: Vec::new(),
             shown: Vec::new(),
             spreads: Vec::new(),
+            yields: Vec::new(),
         }
     }
 }
@@ -94,7 +101,7 @@ const MAX_REMINDED: usize = 60;
 
 /// Indicateurs calculés par Glaux à partir des séries BCE (après les séries BCE, dans cet ordre).
 /// - « real_rate » : taux réel = taux de dépôt − inflation (mensuel) ;
-/// - « slope » : pente des taux = taux souverain 10 ans − €STR (quotidien) ;
+/// - « slope » : pente 2-10 ans = taux AAA à 10 ans − taux AAA à 2 ans (quotidien, en pb) ;
 /// - « spread_xx » : écart de taux à 10 ans avec l'Allemagne (mensuel), affichés ensemble
 ///   dans le panneau (groupe « spreads », 3 pays au choix parmi 7).
 const DERIVED: [(&str, Frequency); 9] = [
@@ -119,52 +126,109 @@ const DEFAULT_HIDDEN: [&str; 5] = [
     "loans_hh",
 ];
 
-/// Pays de la ligne des écarts de taux par défaut, et nombre maximal (place disponible).
-const DEFAULT_SPREADS: [&str; 3] = ["spread_fr", "spread_it", "spread_es"];
-pub const MAX_SPREADS: usize = 3;
+/// Lignes dont l'utilisateur choisit les pays, avec le choix par défaut :
+/// - « yields » : taux à 10 ans par pays (Allemagne, France, Italie) ;
+/// - « spreads » : écarts de taux avec l'Allemagne (France, Italie, Espagne).
+const CHOOSABLE: [(&str, [&str; 3]); 2] = [
+    ("yields", ["yield_de", "yield_fr", "yield_it"]),
+    ("spreads", ["spread_fr", "spread_it", "spread_es"]),
+];
 
-/// Tous les écarts de taux disponibles, dans l'ordre d'affichage.
-fn all_spreads() -> impl Iterator<Item = &'static str> {
-    DERIVED
+/// Nombre maximal de pays par ligne (place disponible, trois couleurs de courbe).
+pub const MAX_MEMBERS: usize = 3;
+
+/// Tous les membres possibles d'un groupe, dans l'ordre d'affichage (séries BCE, puis calculées).
+fn group_members(group: &str) -> impl Iterator<Item = &'static str> + '_ {
+    SERIES
         .iter()
-        .map(|(id, _)| *id)
-        .filter(|id| group_of(id) == Some("spreads"))
+        .map(|def| def.id)
+        .chain(DERIVED.iter().map(|(id, _)| *id))
+        .filter(move |id| group_of(id) == Some(group))
 }
 
-/// Pays retenus pour la ligne des écarts : identifiants connus, sans doublon, dans l'ordre
-/// d'affichage, entre 1 et `MAX_SPREADS` ; sinon, le choix par défaut.
-fn arrange_spreads(chosen: &[String]) -> Vec<&'static str> {
-    let picked: Vec<&'static str> = all_spreads()
+/// Pays par défaut d'une ligne à choix (vide pour un groupe inconnu).
+fn default_members(group: &str) -> Vec<&'static str> {
+    CHOOSABLE
+        .iter()
+        .find(|(id, _)| *id == group)
+        .map(|(_, members)| members.to_vec())
+        .unwrap_or_default()
+}
+
+/// Pays retenus pour une ligne à choix : identifiants connus, sans doublon, dans l'ordre
+/// d'affichage, entre 1 et `MAX_MEMBERS` ; sinon, le choix par défaut.
+fn arrange_members(group: &str, chosen: &[String]) -> Vec<&'static str> {
+    let picked: Vec<&'static str> = group_members(group)
         .filter(|id| chosen.iter().any(|c| c == id))
-        .take(MAX_SPREADS)
+        .take(MAX_MEMBERS)
         .collect();
     if picked.is_empty() {
-        DEFAULT_SPREADS.to_vec()
+        default_members(group)
     } else {
         picked
     }
 }
 
-/// Groupe d'affichage d'un indicateur (plusieurs indicateurs sur une même ligne du panneau).
+/// Groupe d'affichage d'un indicateur (plusieurs indicateurs sur une même ligne du panneau) :
+/// « yields » (taux à 10 ans par pays), « spreads » (écarts de taux) et « curve » (courbe AAA).
 fn group_of(id: &str) -> Option<&'static str> {
-    id.starts_with("spread_").then_some("spreads")
+    // Taux par pays : « yield_ » suivi d'un code pays (« yield_10y » est le taux zone euro).
+    let country = |code: &str| code.len() == 2 && code.bytes().all(|b| b.is_ascii_lowercase());
+    if id.starts_with("spread_") {
+        Some("spreads")
+    } else if id.starts_with("yc_") {
+        Some("curve")
+    } else if id.strip_prefix("yield_").is_some_and(country) {
+        Some("yields")
+    } else {
+        None
+    }
 }
 
-/// Lignes du panneau dans l'ordre par défaut : les séries BCE affichées, puis les indicateurs
-/// calculés par Glaux (un groupe n'occupe qu'une ligne, ex. « spreads »).
+/// Échéances de la courbe des taux AAA, de la plus courte à la plus longue.
+/// Même ordre que dans src/indicators.ts.
+pub const CURVE: [&str; 11] = [
+    "yc_3m", "yc_6m", "yc_1y", "yc_2y", "yc_3y", "yc_5y", "yc_7y", "yc_10y", "yc_15y", "yc_20y",
+    "yc_30y",
+];
+
+/// Lignes du panneau dans l'ordre par défaut : les séries BCE affichées (un groupe, comme la
+/// courbe des taux, prend la place de son premier membre), puis les indicateurs calculés par
+/// Glaux (les écarts de taux n'occupent qu'une ligne, « spreads »).
 pub fn default_rows() -> Vec<&'static str> {
-    let mut rows: Vec<&'static str> = SERIES
+    let mut rows: Vec<&'static str> = Vec::new();
+    let candidates = SERIES
         .iter()
-        .filter(|def| def.shown)
-        .map(|def| def.id)
-        .collect();
-    for (id, _) in &DERIVED {
-        let row = group_of(id).unwrap_or(id);
+        .filter_map(|def| {
+            if def.shown {
+                Some(def.id)
+            } else {
+                group_of(def.id)
+            }
+        })
+        .chain(DERIVED.iter().map(|(id, _)| group_of(id).unwrap_or(id)));
+    for row in candidates {
         if !rows.contains(&row) {
             rows.push(row);
         }
     }
     rows
+}
+
+/// Vrai pour une ligne calculée par Glaux (indicateur calculé, ou groupe d'indicateurs calculés).
+fn is_derived_row(row: &str) -> bool {
+    DERIVED
+        .iter()
+        .any(|(id, _)| *id == row || group_of(id) == Some(row))
+}
+
+/// Pays enregistrés pour une ligne à choix (None : groupe sans choix de pays).
+fn chosen_in<'a>(prefs: &'a Prefs, group: &str) -> Option<&'a Vec<String>> {
+    match group {
+        "spreads" => Some(&prefs.spreads),
+        "yields" => Some(&prefs.yields),
+        _ => None,
+    }
 }
 
 /// Une ligne du panneau telle qu'envoyée à l'interface : ordre et visibilité choisis.
@@ -191,7 +255,7 @@ fn arrange_rows(order: &[String], hidden: &[String], shown: &[String]) -> Vec<Ro
         .into_iter()
         .map(|id| RowView {
             id,
-            derived: !SERIES.iter().any(|def| def.id == id),
+            derived: is_derived_row(id),
             hidden: is_hidden(id),
         })
         .collect();
@@ -212,8 +276,59 @@ pub fn export_name(id: &str) -> Option<&'static str> {
         .filter(|def| def.shown)
         .map(|def| def.id)
         .chain(DERIVED.iter().map(|(derived, _)| *derived))
-        .chain(["spreads"])
+        .chain(["yields", "spreads", "curve"])
         .find(|known| *known == id)
+}
+
+/// Une courbe des taux à une date : un taux par échéance de `CURVE` (None si absent).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CurvePoint {
+    pub date: String,
+    pub values: Vec<Option<f64>>,
+}
+
+/// Courbe du jour et courbe de comparaison (`months` plus tôt), pour la vue détail.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CurveView {
+    pub latest: Option<CurvePoint>,
+    pub past: Option<CurvePoint>,
+}
+
+/// Dernière observation au plus tard à `date` (séries triées par date, format « AAAA-MM-JJ »).
+fn on_or_before<'a>(observations: &'a [Observation], date: &str) -> Option<&'a Observation> {
+    let end = observations.partition_point(|o| o.date.as_str() <= date);
+    end.checked_sub(1).map(|i| &observations[i])
+}
+
+/// Courbe à une date : pour chaque échéance, le dernier taux connu à cette date.
+fn curve_at(cache: &CacheFile, date: &str) -> CurvePoint {
+    CurvePoint {
+        date: date.to_string(),
+        values: CURVE
+            .iter()
+            .map(|id| on_or_before(cached(cache, id), date).map(|o| o.value))
+            .collect(),
+    }
+}
+
+/// Courbe du dernier jour publié et celle de `months` mois plus tôt (dernier jour ouvré
+/// à cette date). La date de référence est celle du 10 ans AAA.
+fn curve_view(cache: &CacheFile, months: u32) -> CurveView {
+    let Some(last) = cached(cache, "yc_10y").last() else {
+        return CurveView {
+            latest: None,
+            past: None,
+        };
+    };
+    let past = NaiveDate::parse_from_str(&last.date, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.checked_sub_months(Months::new(months)))
+        .and_then(|target| on_or_before(cached(cache, "yc_10y"), &target.to_string()))
+        .map(|o| curve_at(cache, &o.date));
+    CurveView {
+        latest: Some(curve_at(cache, &last.date)),
+        past,
+    }
 }
 
 /// Une série pour l'export Excel (src/excel.rs) : BCE (avec sa clé) ou calculée.
@@ -252,8 +367,9 @@ pub struct DashboardView {
     pub error: Option<String>,
     /// Lignes du panneau, dans l'ordre choisi, avec celles masquées (écran « Indicateurs affichés »).
     pub rows: Vec<RowView>,
-    /// Écarts de taux affichés dans la ligne « spreads » (1 à 3 pays, ex. « spread_fr »).
-    pub spreads: Vec<&'static str>,
+    /// Pays affichés dans chaque ligne à choix (1 à 3) : « yields » → [« yield_de », …],
+    /// « spreads » → [« spread_fr », …].
+    pub selections: BTreeMap<&'static str, Vec<&'static str>>,
     /// Prochaines décisions BCE et inflations flash.
     pub agenda: AgendaView,
     /// Notifications activées.
@@ -357,11 +473,36 @@ impl Store {
             .checked_sub_months(Months::new(HISTORY_MONTHS))
             .unwrap_or(today);
 
-        // Réseau d'abord, sans bloquer le cache (l'interface reste réactive).
+        // Réseau d'abord, sans bloquer le cache (l'interface reste réactive) :
+        // `PARALLEL_DOWNLOADS` fils se partagent les séries, chacun prend la suivante libre.
+        let next = AtomicUsize::new(0);
+        let mut results: Vec<(usize, Result<Vec<Observation>, String>)> =
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = (0..PARALLEL_DOWNLOADS)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut done = Vec::new();
+                            loop {
+                                let i = next.fetch_add(1, Ordering::SeqCst);
+                                let Some(def) = SERIES.get(i) else { break };
+                                done.push((i, ecb::fetch_series(&self.agent, def, start)));
+                            }
+                            done
+                        })
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .flat_map(|worker| worker.join().unwrap_or_default())
+                    .collect()
+            });
+        results.sort_by_key(|(i, _)| *i);
+
         let mut fresh = Vec::new();
         let mut errors = Vec::new();
-        for def in &SERIES {
-            match ecb::fetch_series(&self.agent, def, start) {
+        for (i, result) in results {
+            let def = &SERIES[i];
+            match result {
                 Ok(observations) => fresh.push(CachedSeries {
                     id: def.id.to_string(),
                     key: def.full_key(),
@@ -475,39 +616,65 @@ impl Store {
         self.save_prefs(&prefs)
     }
 
-    /// « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut des écarts.
+    /// « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut.
     pub fn reset_layout(&self) -> Result<(), String> {
         let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
         prefs.order.clear();
         prefs.hidden.clear();
         prefs.shown.clear();
         prefs.spreads.clear();
+        prefs.yields.clear();
         self.save_prefs(&prefs)
     }
 
-    /// Écarts de taux affichés dans la ligne « spreads ».
-    pub fn spreads(&self) -> Vec<&'static str> {
-        match self.prefs.lock() {
-            Ok(prefs) => arrange_spreads(&prefs.spreads),
-            Err(_) => DEFAULT_SPREADS.to_vec(),
-        }
+    /// Pays affichés dans chaque ligne à choix (« yields », « spreads »).
+    pub fn selections(&self) -> BTreeMap<&'static str, Vec<&'static str>> {
+        let prefs = self.prefs.lock().ok();
+        CHOOSABLE
+            .iter()
+            .map(|(group, _)| {
+                let chosen = prefs
+                    .as_deref()
+                    .and_then(|p| chosen_in(p, group))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                (*group, arrange_members(group, chosen))
+            })
+            .collect()
     }
 
-    /// Choisit les pays de la ligne des écarts (1 à `MAX_SPREADS`, identifiants connus).
-    pub fn set_spreads(&self, chosen: &[String]) -> Result<(), String> {
+    /// Choisit les pays d'une ligne (1 à `MAX_MEMBERS`, identifiants connus de ce groupe).
+    pub fn set_selection(&self, group: &str, chosen: &[String]) -> Result<(), String> {
         let known = chosen
             .iter()
-            .filter(|id| all_spreads().any(|s| s == id.as_str()))
+            .filter(|id| group_members(group).any(|m| m == id.as_str()))
             .count();
-        if known == 0 || known > MAX_SPREADS {
-            return Err(format!("choisir entre 1 et {MAX_SPREADS} pays"));
+        if known == 0 || known > MAX_MEMBERS {
+            return Err(format!("choisir entre 1 et {MAX_MEMBERS} pays"));
         }
-        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
-        prefs.spreads = arrange_spreads(chosen)
+        let members: Vec<String> = arrange_members(group, chosen)
             .into_iter()
             .map(str::to_string)
             .collect();
+        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
+        match group {
+            "spreads" => prefs.spreads = members,
+            "yields" => prefs.yields = members,
+            _ => return Err(format!("ligne sans choix de pays : {group}")),
+        }
         self.save_prefs(&prefs)
+    }
+
+    /// Courbe des taux du jour et celle de `months` mois plus tôt (1 à 5 ans).
+    pub fn curve(&self, months: u32) -> CurveView {
+        let months = months.clamp(1, MAX_DETAIL_MONTHS);
+        match self.cache.lock() {
+            Ok(cache) => curve_view(&cache, months),
+            Err(_) => CurveView {
+                latest: None,
+                past: None,
+            },
+        }
     }
 
     /// Rappels du jour J à envoyer maintenant, chacun une seule fois (même après un redémarrage).
@@ -603,20 +770,26 @@ impl Store {
         let empty = CacheFile::default();
         let data = cache.as_deref().unwrap_or(&empty);
 
+        // Séries BCE du panneau et membres de groupe (courbe des taux), puis indicateurs calculés.
         let ids = SERIES
             .iter()
-            .filter(|def| def.shown)
+            .filter(|def| def.shown || group_of(def.id).is_some())
             .map(|def| (def.id, false))
             .chain(DERIVED.iter().map(|(id, _)| (*id, true)));
         let indicators = ids
             .filter_map(|(id, derived)| {
                 let (observations, frequency, step) = series_data(data, id)?;
+                let group = group_of(id);
                 Some(IndicatorView {
                     id,
                     derived,
-                    group: group_of(id),
+                    group,
                     summary: summarize(&observations, frequency, step, today),
-                    spark: sparkline(&observations, frequency, today),
+                    // Un membre de groupe n'a pas de mini-courbe propre : rien d'inutile à envoyer.
+                    spark: match group {
+                        Some(_) => Vec::new(),
+                        None => sparkline(&observations, frequency, today),
+                    },
                 })
             })
             .collect();
@@ -627,7 +800,7 @@ impl Store {
             refreshing: self.refreshing.load(Ordering::SeqCst),
             error: self.last_error.lock().ok().and_then(|e| e.clone()),
             rows: self.rows(),
-            spreads: self.spreads(),
+            selections: self.selections(),
             agenda: agenda_view(today),
             notifications: self.notifications_enabled(),
             notification_error: None,
@@ -665,7 +838,7 @@ fn series_data<'a>(
     let (_, frequency) = DERIVED.iter().find(|(derived, _)| *derived == id)?;
     let observations = match id {
         "real_rate" => real_rate(cached(cache, "deposit_rate"), cached(cache, "hicp")),
-        "slope" => spread(cached(cache, "yield_10y"), cached(cache, "estr")),
+        "slope" => spread(cached(cache, "yc_10y"), cached(cache, "yc_2y")),
         // Écarts avec l'Allemagne (Bund) : mêmes mois des deux côtés.
         "spread_fr" => spread(cached(cache, "yield_fr"), cached(cache, "yield_de")),
         "spread_it" => spread(cached(cache, "yield_it"), cached(cache, "yield_de")),
@@ -698,6 +871,14 @@ mod tests {
         }
     }
 
+    fn cache_with(series: Vec<CachedSeries>) -> CacheFile {
+        CacheFile {
+            version: CACHE_VERSION,
+            last_success: None,
+            series,
+        }
+    }
+
     #[test]
     fn indicateurs_calcules_depuis_le_cache() {
         let cache = CacheFile {
@@ -706,8 +887,8 @@ mod tests {
             series: vec![
                 series("deposit_rate", &[("2025-06-11", 2.0)]),
                 series("hicp", &[("2026-09", 3.8), ("2026-10", 4.0)]),
-                series("yield_10y", &[("2026-11-23", 3.93)]),
-                series("estr", &[("2026-11-20", 2.443)]),
+                series("yc_10y", &[("2026-11-23", 3.3209), ("2026-11-24", 3.3121)]),
+                series("yc_2y", &[("2026-11-23", 3.03), ("2026-11-24", 3.0168)]),
             ],
         };
 
@@ -716,8 +897,10 @@ mod tests {
         assert!(!step);
         assert_eq!(real.last().unwrap().value, -2.0);
 
-        let (slope, _, _) = series_data(&cache, "slope").unwrap();
-        assert_eq!(slope.last().unwrap().value, 1.487);
+        // Pente 2-10 ans de la courbe AAA (24/11/2026 : 3,3121 − 3,0168 = 29,5 pb).
+        let (slope, frequency, _) = series_data(&cache, "slope").unwrap();
+        assert_eq!(frequency, Frequency::Daily);
+        assert_eq!(slope.last().unwrap().value, 0.2953);
 
         assert!(series_data(&cache, "inconnu").is_none());
     }
@@ -760,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn vue_sans_les_taux_par_pays_et_avec_le_groupe() {
+    fn vue_avec_les_groupes_de_pays() {
         let dir = temp_dir("vue-ecarts");
         let store = Store::load(dir.clone(), Lang::Fr);
         if let Ok(mut cache) = store.cache.lock() {
@@ -770,15 +953,12 @@ mod tests {
             ];
         }
         let view = store.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
-        // Les taux par pays servent au calcul mais ne sont pas des lignes du panneau.
-        let country_yields = [
-            "yield_de", "yield_fr", "yield_it", "yield_es", "yield_gr", "yield_pt", "yield_be",
-            "yield_nl",
-        ];
-        assert!(view
-            .indicators
-            .iter()
-            .all(|i| !country_yields.contains(&i.id)));
+        // Les taux par pays sont envoyés comme membres de la ligne « yields », sans mini-courbe.
+        let fr_yield = view.indicators.iter().find(|i| i.id == "yield_fr").unwrap();
+        assert_eq!(fr_yield.group, Some("yields"));
+        assert!(!fr_yield.derived && fr_yield.spark.is_empty());
+        assert_eq!(fr_yield.summary.latest.as_ref().unwrap().value, 4.89);
+        assert_eq!(export_name("yields"), Some("yields"));
         assert!(view.indicators.iter().any(|i| i.id == "yield_10y")); // taux zone euro : affiché
         let fr = view
             .indicators
@@ -874,6 +1054,8 @@ mod tests {
                 "services_inflation",
                 "estr",
                 "yield_10y",
+                "yields",
+                "curve",
                 "eurusd",
                 "unemployment",
                 "m3",
@@ -886,7 +1068,8 @@ mod tests {
         );
         let rows = arrange_rows(&[], &[], &[]);
         assert_eq!(ids(&rows), default_rows());
-        // Affichées par défaut : les 9 lignes de la v0.2 ; les 5 nouvelles sont masquées.
+        // Affichées par défaut : les 9 lignes de la v0.2, les taux par pays et la courbe ;
+        // 5 nouvelles masquées.
         let visible: Vec<_> = rows.iter().filter(|r| !r.hidden).map(|r| r.id).collect();
         assert_eq!(
             visible,
@@ -895,6 +1078,8 @@ mod tests {
                 "hicp",
                 "estr",
                 "yield_10y",
+                "yields",
+                "curve",
                 "eurusd",
                 "unemployment",
                 "real_rate",
@@ -902,7 +1087,11 @@ mod tests {
                 "spreads"
             ]
         );
-        assert!(!rows[0].derived && rows[13].derived); // taux de dépôt : BCE ; écarts : calculés
+        assert!(!rows[0].derived && rows[15].derived); // taux de dépôt : BCE ; écarts : calculés
+        let curve = rows.iter().find(|r| r.id == "curve").unwrap();
+        assert!(!curve.derived); // courbe : données BCE
+        let yields = rows.iter().find(|r| r.id == "yields").unwrap();
+        assert!(!yields.derived); // taux par pays : données BCE
     }
 
     #[test]
@@ -920,6 +1109,8 @@ mod tests {
                 "services_inflation",
                 "estr",
                 "yield_10y",
+                "yields",
+                "curve",
                 "eurusd",
                 "unemployment",
                 "m3",
@@ -937,7 +1128,7 @@ mod tests {
         let all = strings(&default_rows());
         // Tout masqué (fichier abîmé) : retour à l'affichage par défaut.
         let rows = arrange_rows(&[], &all, &[]);
-        assert_eq!(rows.iter().filter(|row| !row.hidden).count(), 9);
+        assert_eq!(rows.iter().filter(|row| !row.hidden).count(), 11);
         let dir = temp_dir("tout-masque");
         let store = Store::load(dir.clone(), Lang::Fr);
         assert!(store.set_layout(&[], &all).is_err());
@@ -957,7 +1148,7 @@ mod tests {
         let reopened = Store::load(dir.clone(), Lang::Fr);
         let rows = reopened.rows();
         assert_eq!(&ids(&rows)[..2], ["eurusd", "deposit_rate"]);
-        assert_eq!(rows[11].id, "spreads");
+        assert_eq!(rows[13].id, "spreads");
         // Masquées : celles choisies ; les 5 nouvelles sont affichées (absentes de `hidden`).
         let hidden: Vec<_> = rows.iter().filter(|r| r.hidden).map(|r| r.id).collect();
         assert_eq!(hidden, ["unemployment", "slope"]);
@@ -1000,8 +1191,92 @@ mod tests {
     }
 
     #[test]
-    fn pays_des_ecarts_de_taux() {
-        assert_eq!(arrange_spreads(&[]), DEFAULT_SPREADS);
+    fn courbe_du_jour_et_d_il_y_a_un_an() {
+        fn day(d: &str, v: f64) -> (&str, f64) {
+            (d, v)
+        }
+        let cache = cache_with(vec![
+            series(
+                "yc_2y",
+                &[
+                    day("2025-11-21", 2.05),
+                    day("2025-11-24", 2.0),
+                    day("2026-11-24", 3.2),
+                ],
+            ),
+            series(
+                "yc_10y",
+                &[
+                    day("2025-11-21", 2.62),
+                    day("2025-11-24", 2.6),
+                    day("2026-11-23", 3.95),
+                    day("2026-11-24", 3.93),
+                ],
+            ),
+            series("yc_30y", &[day("2025-11-24", 3.1), day("2026-11-20", 4.3)]),
+        ]);
+        let view = curve_view(&cache, 12);
+        let latest = view.latest.unwrap();
+        assert_eq!(latest.date, "2026-11-24");
+        assert_eq!(latest.values.len(), CURVE.len());
+        assert_eq!(latest.values[3], Some(3.2)); // 2 ans
+        assert_eq!(latest.values[7], Some(3.93)); // 10 ans
+        assert_eq!(latest.values[10], Some(4.3)); // 30 ans : dernier taux connu (20 nov.)
+        assert_eq!(latest.values[0], None); // 3 mois absent du cache
+        let past = view.past.unwrap();
+        assert_eq!(past.date, "2025-11-24");
+        assert_eq!(past.values[3], Some(2.0));
+        assert_eq!(past.values[10], Some(3.1));
+
+        // Pas assez d'historique : pas de courbe de comparaison.
+        let view = curve_view(&cache, 60);
+        assert!(view.latest.is_some() && view.past.is_none());
+        assert_eq!(
+            curve_view(&cache_with(vec![]), 12),
+            CurveView {
+                latest: None,
+                past: None
+            }
+        );
+    }
+
+    #[test]
+    fn membres_de_la_courbe_dans_la_vue_sans_mini_courbe() {
+        let cache = cache_with(vec![
+            series("yc_2y", &[("2026-11-23", 3.21), ("2026-11-24", 3.2)]),
+            series("yc_10y", &[("2026-11-23", 3.32), ("2026-11-24", 3.31)]),
+            series("yield_10y", &[("2026-11-23", 3.95), ("2026-11-24", 3.93)]),
+        ]);
+        let dir = temp_dir("courbe-vue");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        *store.cache.lock().unwrap() = cache;
+        let view = store.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
+        let member = view.indicators.iter().find(|i| i.id == "yc_2y").unwrap();
+        assert_eq!(member.group, Some("curve"));
+        assert!(member.spark.is_empty());
+        let ten = view
+            .indicators
+            .iter()
+            .find(|i| i.id == "yield_10y")
+            .unwrap();
+        assert_eq!(ten.group, None); // le 10 ans toutes notations garde sa ligne et sa mini-courbe
+        assert!(!ten.spark.is_empty());
+        let aaa = view.indicators.iter().find(|i| i.id == "yc_10y").unwrap();
+        assert_eq!(aaa.group, Some("curve")); // le 10 ans AAA appartient à la courbe
+        assert_eq!(export_name("curve"), Some("curve"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pays_des_lignes_a_choix() {
+        assert_eq!(
+            arrange_members("spreads", &[]),
+            ["spread_fr", "spread_it", "spread_es"]
+        );
+        assert_eq!(
+            arrange_members("yields", &[]),
+            ["yield_de", "yield_fr", "yield_it"]
+        );
         // Ordre d'affichage, sans doublon ni inconnu, 3 au plus.
         let chosen = strings(&[
             "spread_nl",
@@ -1011,32 +1286,46 @@ mod tests {
             "spread_fr",
         ]);
         assert_eq!(
-            arrange_spreads(&chosen),
+            arrange_members("spreads", &chosen),
             ["spread_fr", "spread_gr", "spread_nl"]
         );
-        assert_eq!(all_spreads().count(), 7);
+        // Un écart ne peut pas entrer dans la ligne des taux, et inversement.
+        assert_eq!(
+            arrange_members("yields", &strings(&["spread_fr", "yield_es"])),
+            ["yield_es"]
+        );
+        assert_eq!(group_members("spreads").count(), 7);
+        assert_eq!(group_members("yields").count(), 8); // Allemagne comprise
+        assert_eq!(group_of("yield_10y"), None); // taux zone euro : sa propre ligne
+        assert_eq!(group_of("yield_de"), Some("yields"));
 
         let dir = temp_dir("pays");
         let store = Store::load(dir.clone(), Lang::Fr);
-        assert_eq!(store.spreads(), DEFAULT_SPREADS);
+        let defaults = store.selections();
+        assert_eq!(defaults["spreads"], ["spread_fr", "spread_it", "spread_es"]);
+        assert_eq!(defaults["yields"], ["yield_de", "yield_fr", "yield_it"]);
         store
-            .set_spreads(&strings(&["spread_gr", "spread_pt"]))
+            .set_selection("spreads", &strings(&["spread_gr", "spread_pt"]))
             .unwrap();
-        assert_eq!(
-            Store::load(dir.clone(), Lang::Fr).spreads(),
-            ["spread_gr", "spread_pt"]
-        );
-        assert!(store.set_spreads(&[]).is_err());
+        store
+            .set_selection("yields", &strings(&["yield_nl", "yield_gr"]))
+            .unwrap();
+        let reopened = Store::load(dir.clone(), Lang::Fr).selections();
+        assert_eq!(reopened["spreads"], ["spread_gr", "spread_pt"]);
+        assert_eq!(reopened["yields"], ["yield_gr", "yield_nl"]);
+        assert!(store.set_selection("spreads", &[]).is_err());
         assert!(store
-            .set_spreads(&strings(&[
-                "spread_fr",
-                "spread_it",
-                "spread_es",
-                "spread_gr"
-            ]))
+            .set_selection("yields", &strings(&["spread_fr"]))
+            .is_err());
+        assert!(store.set_selection("curve", &strings(&["yc_10y"])).is_err());
+        assert!(store
+            .set_selection(
+                "spreads",
+                &strings(&["spread_fr", "spread_it", "spread_es", "spread_gr"])
+            )
             .is_err());
         store.reset_layout().unwrap();
-        assert_eq!(store.spreads(), DEFAULT_SPREADS);
+        assert_eq!(store.selections(), defaults);
         let _ = fs::remove_dir_all(dir);
     }
 

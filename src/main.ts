@@ -14,6 +14,7 @@ import {
   EXPORT_FORMATS,
   copyPng,
   formatSize,
+  renderCurveExportImage,
   renderExportImage,
   renderGroupExportImage,
   savePng,
@@ -27,9 +28,25 @@ import {
   formatNumber,
   formatUpdate,
   formatValue,
+  shortChange,
+  shortUnit,
+  shortValue,
 } from "./format";
 import { lang, locale, setLang, t } from "./i18n";
-import { displayFor, groupCandidates, groupFor, setGroupSelection, type GroupDisplay } from "./indicators";
+import { curveChart, curveSlope, loadCurve, tenorAt, todayRates, type CurveView } from "./curve";
+import {
+  CURVE_ID,
+  CURVE_TENORS,
+  curveDisplay,
+  curveSlopeDisplay,
+  displayFor,
+  groupCandidates,
+  groupFor,
+  MAX_MEMBERS,
+  setGroupSelection,
+  tenorName,
+  type GroupDisplay,
+} from "./indicators";
 import { setupTooltips } from "./tooltip";
 import type { DashboardView, IndicatorView, Observation, RowView } from "./types";
 
@@ -53,6 +70,27 @@ let customizeOpen = false;
 let layoutSaves = 0;
 /** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
 let exportFormat: ExportFormat = loadExportFormat();
+/**
+ * Panneau agrandi : liste à gauche, vue détail (ou « Indicateurs affichés ») à droite,
+ * en grand. Retenu d'une fois sur l'autre.
+ */
+let large = loadLarge();
+
+function loadLarge(): boolean {
+  try {
+    return localStorage.getItem("glaux.large") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveLarge(): void {
+  try {
+    localStorage.setItem("glaux.large", large ? "1" : "0");
+  } catch {
+    // Stockage indisponible : le choix vaut pour cette session.
+  }
+}
 
 function loadExportFormat(): ExportFormat {
   try {
@@ -119,19 +157,7 @@ function groupMembers(group: GroupDisplay, indicators: IndicatorView[]) {
   });
 }
 
-/** Valeur courte d'un écart, en points de base sans unité : « 147 ». */
-function shortBp(value: number | undefined): string {
-  return value === undefined ? "—" : formatNumber(value * 100, 0);
-}
-
-/** Variation courte sur 1 mois, en points de base : « +45 », « −3 », « = ». */
-function shortBpChange(indicator: IndicatorView): string {
-  if (!indicator.latest || !indicator.reference) return "";
-  const change = (indicator.latest.value - indicator.reference.value) * 100;
-  return Math.abs(change) < 0.5 ? "=" : formatNumber(change, 0, true);
-}
-
-/** Ligne d'un groupe (écarts de taux) : nom à gauche, une valeur par pays à droite. */
+/** Ligne d'un groupe (taux ou écarts par pays) : nom à gauche, une valeur par pays à droite. */
 function renderGroupRow(groupId: string, indicators: IndicatorView[]): HTMLLIElement | null {
   const group = groupFor(groupId);
   if (!group) return null;
@@ -145,7 +171,11 @@ function renderGroupRow(groupId: string, indicators: IndicatorView[]): HTMLLIEle
   left.setAttribute("data-tooltip", group.hint);
   left.append(
     el("span", "indicator__label", group.short),
-    el("span", "indicator__sub", dated ? t().groupSub(formatDateLine(dated.indicator, dated.display)) : ""),
+    el(
+      "span",
+      "indicator__sub",
+      dated ? t().groupSub(shortUnit(dated.display), formatDateLine(dated.indicator, dated.display)) : "",
+    ),
   );
 
   const cells = el("div", "group-cells");
@@ -155,8 +185,11 @@ function renderGroupRow(groupId: string, indicators: IndicatorView[]): HTMLLIEle
     const value = indicator.latest ? formatValue(indicator.latest.value, display) : "—";
     cell.setAttribute("data-tooltip", `${t().memberHint(display.label, value, formatChange(indicator, display))}. ${display.hint}`);
     const top = el("span", "group-cell__top");
-    top.append(el("span", "group-cell__code", member.code), el("span", "group-cell__value", shortBp(indicator.latest?.value)));
-    cell.append(top, el("span", "indicator__sub", shortBpChange(indicator)));
+    top.append(
+      el("span", "group-cell__code", member.code),
+      el("span", "group-cell__value", shortValue(indicator.latest?.value, display)),
+    );
+    cell.append(top, el("span", "indicator__sub", shortChange(indicator, display)));
     cells.append(cell);
   }
 
@@ -214,11 +247,14 @@ function renderList(view: DashboardView): void {
     if (row.hidden) continue;
     // Groupe (écarts de taux) : une seule ligne pour ses membres.
     const indicator = view.indicators.find((i) => i.id === row.id);
-    const node = groupFor(row.id)
-      ? renderGroupRow(row.id, view.indicators.filter((i) => i.group === row.id))
-      : indicator
-        ? renderRow(indicator)
-        : null;
+    const node =
+      row.id === CURVE_ID
+        ? renderCurveRow(view.indicators)
+        : groupFor(row.id)
+          ? renderGroupRow(row.id, view.indicators.filter((i) => i.group === row.id))
+          : indicator
+            ? renderRow(indicator)
+            : null;
     if (!node) continue;
     // Intertitre avant la première ligne calculée par Glaux.
     if (row.derived && !sectionShown) {
@@ -230,14 +266,15 @@ function renderList(view: DashboardView): void {
     nodes.push(node);
   }
   list.replaceChildren(...nodes);
+  markSelectedRow();
 }
 
 function render(incoming: DashboardView): void {
   // Choix d'affichage en cours d'enregistrement : on garde celui de l'écran (déjà à jour).
   const view =
-    layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows, spreads: dashboard.spreads } : incoming;
+    layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows, selections: dashboard.selections } : incoming;
   dashboard = view;
-  setGroupSelection("spreads", view.spreads);
+  for (const [groupId, ids] of Object.entries(view.selections ?? {})) setGroupSelection(groupId, ids);
   // Langue choisie dans Rust (système ou préférence) : textes fixes remis à jour si elle change.
   if (setLang(view.language)) applyStaticTexts();
   // Nouvelles données : les historiques en mémoire sont périmés.
@@ -250,6 +287,7 @@ function render(incoming: DashboardView): void {
   renderAgenda();
   renderAlertsToggle(view);
   document.querySelector(".brand")?.setAttribute("data-tooltip", t().brandHint(view.version));
+  if (large && !customizeOpen) ensureSelection();
   if (detailId && !view.refreshing) void renderDetail();
   scheduleFit();
 }
@@ -293,11 +331,44 @@ function showScreen(): void {
   const list = $("indicators");
   const detail = $("detail");
   const customize = $("customize");
-  if (list) list.hidden = detailId !== null || customizeOpen;
-  if (detail) detail.hidden = detailId === null;
+  document.querySelector(".panel")?.classList.toggle("is-large", large);
+  if (large) {
+    // Agrandi : la liste reste visible ; à droite, la vue détail ou « Indicateurs affichés ».
+    if (list) list.hidden = false;
+    if (detail) detail.hidden = customizeOpen || detailId === null;
+    markSelectedRow();
+  } else {
+    if (list) list.hidden = detailId !== null || customizeOpen;
+    if (detail) detail.hidden = detailId === null;
+  }
   if (customize) customize.hidden = !customizeOpen;
   $("customize-open")?.classList.toggle("is-active", customizeOpen);
+  renderLargeButton();
   scheduleFit();
+}
+
+/** Panneau agrandi : ligne de la liste dont la vue détail est ouverte à droite. */
+function markSelectedRow(): void {
+  document.querySelectorAll<HTMLElement>("#indicators .indicator").forEach((row) => {
+    row.classList.toggle("is-selected", large && row.dataset.id === detailId);
+  });
+}
+
+/** Lignes affichées dans la liste, dans l'ordre (identifiants). */
+function visibleRowIds(): string[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("#indicators .indicator")).flatMap((row) =>
+    row.dataset.id ? [row.dataset.id] : [],
+  );
+}
+
+/** Panneau agrandi : sans indicateur choisi (ou masqué entre-temps), on ouvre le premier de la liste. */
+function ensureSelection(): void {
+  if (!large) return;
+  const ids = visibleRowIds();
+  if (detailId && ids.includes(detailId)) return;
+  if (ids.length === 0) return;
+  detailId = ids[0];
+  void renderDetail();
 }
 
 function openDetail(id: string): void {
@@ -308,11 +379,82 @@ function openDetail(id: string): void {
 }
 
 function closeDetail(): void {
+  if (large) return; // agrandi : la vue détail reste ouverte à droite
   detailId = null;
   showScreen();
 }
 
+/** Agrandir ou réduire le panneau. */
+function toggleLarge(): void {
+  large = !large;
+  saveLarge();
+  if (large) {
+    ensureSelection();
+  } else {
+    detailId = null; // réduit : retour à la liste
+  }
+  showScreen();
+  if (large && detailId) void renderDetail();
+}
+
+function renderLargeButton(): void {
+  const button = $("large-toggle");
+  if (!button) return;
+  const strings = t();
+  button.setAttribute("aria-label", large ? strings.shrinkPanel : strings.enlargePanel);
+  button.setAttribute("data-tooltip", large ? strings.shrinkPanel : strings.enlargePanel);
+  button.classList.toggle("is-active", large);
+}
+
+/** Panneau agrandi : ↑ ↓ passent à l'indicateur précédent ou suivant. */
+function moveSelection(step: -1 | 1): void {
+  const ids = visibleRowIds();
+  if (ids.length === 0) return;
+  const index = detailId ? ids.indexOf(detailId) : -1;
+  const next = ids[Math.min(ids.length - 1, Math.max(0, index + step))];
+  if (next && next !== detailId) {
+    openDetail(next);
+    document.querySelector<HTMLElement>(`#indicators .indicator[data-id="${next}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+}
+
 /** Remplit un élément de la vue détail par son identifiant. */
+/**
+ * Ligne « Courbe des taux AAA » : la forme de la courbe du jour en mini-graphique
+ * (3 mois → 30 ans) et ses deux extrémités (« 2,69 → 3,60 % »). La pente 2-10 ans a sa
+ * propre ligne (indicateur calculé « slope »), avec son historique.
+ */
+function renderCurveRow(indicators: IndicatorView[]): HTMLLIElement | null {
+  const ten = indicators.find((i) => i.id === "yc_10y");
+  const rates = todayRates(indicators);
+  if (!ten || rates.some((v) => v === undefined)) return null; // données pas encore téléchargées
+  const values = rates as number[];
+  const display = curveDisplay();
+
+  const row = el("li", "indicator");
+  row.dataset.id = CURVE_ID;
+  const left = el("div", "indicator__left");
+  left.setAttribute("data-tooltip", display.hint);
+  left.append(
+    el("span", "indicator__label", display.label),
+    el("span", "indicator__sub", formatDateLine(ten, display)),
+  );
+
+  const spark = renderSparkline(values, display);
+  const first = values[0];
+  const last = values[values.length - 1];
+  spark.setAttribute("data-tooltip", t().curveSparkHint(formatValue(first, display), formatValue(last, display)));
+
+  const right = el("div", "indicator__right");
+  right.setAttribute("data-tooltip", t().curveEndsHint);
+  right.append(
+    el("span", "indicator__value", `${formatNumber(first, display.decimals)} → ${formatValue(last, display)}`),
+    el("span", "indicator__sub", t().curveEnds),
+  );
+  row.append(left, spark, right);
+  return row;
+}
+
 function setText(elementId: string, text: string): void {
   const node = $(elementId);
   if (node) node.textContent = text;
@@ -327,6 +469,7 @@ function renderPeriodButtons(): void {
 
 async function renderDetail(): Promise<void> {
   const id = detailId;
+  if (id === CURVE_ID) return renderCurveDetail();
   const group = id ? groupFor(id) : undefined;
   if (id && group) return renderGroupDetail(id, group);
 
@@ -399,7 +542,7 @@ async function loadGroupSeries(group: GroupDisplay, months: number): Promise<Cha
   );
 }
 
-/** Vue détail d'un groupe (écarts de taux) : légende par pays et courbes superposées. */
+/** Vue détail d'un groupe (taux ou écarts par pays) : légende par pays et courbes superposées. */
 async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void> {
   const members = groupMembers(group, dashboard?.indicators ?? []);
   const first = members.find((m) => m.indicator.latest) ?? members[0];
@@ -410,7 +553,8 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
   const display = first.display;
 
   setText("detail-title", group.label);
-  setText("detail-date", `${t().monthlyAverages} · ${t().groupSub(formatDateLine(first.indicator, display))}`);
+  const unit = shortUnit(display);
+  setText("detail-date", `${t().monthlyAverages} · ${t().groupSub(unit, formatDateLine(first.indicator, display))}`);
   setText("detail-explain", group.explanation);
   document.querySelector(".detail__right")?.setAttribute("hidden", "");
   renderPeriodButtons();
@@ -424,11 +568,11 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
         item.style.setProperty("--serie", member.color);
         const value = indicator.latest ? formatValue(indicator.latest.value, memberDisplay) : "—";
         item.setAttribute("data-tooltip", `${t().memberHint(memberDisplay.label, value, formatChange(indicator, memberDisplay))}. ${memberDisplay.hint}`);
-        // Sans l'unité (déjà dans le sous-titre « en pb ») : 3 pays tiennent sur une ligne.
+        // Sans l'unité (déjà dans le sous-titre « en pb », « en % ») : 3 pays tiennent sur une ligne.
         item.append(
           el("span", "", member.code),
-          el("span", "legend-item__value", shortBp(indicator.latest?.value)),
-          el("span", "", shortBpChange(indicator)),
+          el("span", "legend-item__value", shortValue(indicator.latest?.value, memberDisplay)),
+          el("span", "", shortChange(indicator, memberDisplay)),
         );
         return item;
       }),
@@ -446,25 +590,111 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
   if (!readout || !chart) return;
   readout.textContent = t().hoverHint;
 
-  // Au survol : « oct. 2026 : FR 147 · IT 126 · ES 65 pb ».
+  // Au survol : « oct. 2026 : FR 147 · IT 126 · ES 65 pb » ou « … : DE 2,71 · FR 3,42 · IT 3,56 % ».
   const onHover = (date: string | null, hovered: (number | null)[]) => {
     if (!date) {
       readout.textContent = t().hoverHint;
       return;
     }
     const parts = group.members
-      .map((member, k) => (hovered[k] === null || hovered[k] === undefined ? "" : `${member.code} ${shortBp(hovered[k] as number)}`))
+      .map((member, k) => {
+        const value = hovered[k];
+        return value === null || value === undefined ? "" : `${member.code} ${shortValue(value, display)}`;
+      })
       .filter(Boolean)
       .join(" · ");
-    readout.textContent = t().readout(formatFullPeriod(date, true), `${parts} ${t().bpUnit}`);
+    const withUnit = display.kind === "bp" ? t().basisPoints(parts) : t().percent(parts);
+    readout.textContent = t().readout(formatFullPeriod(date, true), withUnit);
   };
   const width = chart.clientWidth || 364;
   const height = Math.max(150, chart.clientHeight || 150);
   chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover));
 }
 
+/**
+ * Vue détail de la courbe des taux : écart 10 ans − 2 ans à droite, courbe du jour (or) et
+ * courbe d'il y a 1 ou 5 ans (pointillés crème), une échéance par graduation.
+ */
+async function renderCurveDetail(): Promise<void> {
+  const indicators = dashboard?.indicators ?? [];
+  const ten = indicators.find((i) => i.id === "yc_10y");
+  const slope = curveSlope(indicators);
+  const slopeDisplay = curveSlopeDisplay();
+  if (!ten) {
+    closeDetail();
+    return;
+  }
+  const display = curveDisplay();
+
+  // À droite : la pente 2-10 ans, la lecture la plus utile d'une courbe.
+  setText("detail-title", display.label);
+  setText("detail-date", t().curveSub(formatDateLine(ten, display)));
+  document.querySelector(".detail__right")?.removeAttribute("hidden");
+  setText("detail-value", slope?.latest && slopeDisplay ? formatValue(slope.latest.value, slopeDisplay) : "—");
+  setText("detail-change", slope && slopeDisplay ? `${t().curveSlope} · ${formatChange(slope, slopeDisplay)}` : "");
+  setText("detail-explain", display.explanation);
+  renderPeriodButtons();
+
+  const months = detailMonths;
+  const request = ++detailRequest;
+  let curve: CurveView = { latest: null, past: null };
+  try {
+    curve = await loadCurve(months);
+  } catch (err) {
+    console.error("Courbe indisponible :", err);
+  }
+  if (request !== detailRequest || detailId !== CURVE_ID) return;
+
+  // Légende : date de chaque courbe, dans sa couleur.
+  const legend = $("detail-legend");
+  const { series, labels } = curveChart(curve);
+  if (legend) {
+    const items = [
+      curve.latest ? { color: COLORS.or, text: formatFullPeriod(curve.latest.date, false) } : null,
+      curve.past ? { color: COLORS.creme, text: `${formatFullPeriod(curve.past.date, false)} (${t().curveAgo(months)})` } : null,
+    ].flatMap((item) => (item ? [item] : []));
+    legend.replaceChildren(
+      ...items.map(({ color, text }) => {
+        const item = el("span", "legend-item");
+        item.style.setProperty("--serie", color);
+        item.append(el("span", "", text));
+        return item;
+      }),
+    );
+    legend.removeAttribute("hidden");
+  }
+
+  const readout = $("detail-readout");
+  const chart = $("detail-chart");
+  if (!readout || !chart) return;
+  readout.textContent = t().curveHoverHint;
+
+  // Au survol : « 10 ans : 3,93 % (il y a 1 an : 2,60 %) ».
+  const onHover = (key: string | null, hovered: (number | null)[]) => {
+    const tenor = key === null ? undefined : CURVE_TENORS[tenorAt(key)];
+    const today = hovered[hovered.length - 1];
+    if (!tenor || today === null || today === undefined) {
+      readout.textContent = t().curveHoverHint;
+      return;
+    }
+    const past = curve.past ? hovered[0] : null;
+    const value = formatValue(today, display);
+    readout.textContent =
+      past === null || past === undefined
+        ? t().readout(tenorName(tenor), value)
+        : t().curveReadout(tenorName(tenor), value, t().curveAgo(months), formatValue(past, display));
+  };
+  const width = chart.clientWidth || 364;
+  const height = Math.max(150, chart.clientHeight || 150);
+  chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover, labels));
+}
+
 /** Image de la vue détail ouverte, au format choisi. */
 async function buildImage(id: string): Promise<Uint8Array> {
+  if (id === CURVE_ID) {
+    const curve = await loadCurve(detailMonths);
+    return renderCurveExportImage(curve, curveSlope(dashboard?.indicators ?? []), detailMonths, exportFormat);
+  }
   const group = groupFor(id);
   if (group) {
     const members = groupMembers(group, dashboard?.indicators ?? []);
@@ -537,11 +767,12 @@ async function exportExcel(): Promise<void> {
 
 /** Nom d'une ligne : indicateur ou groupe. */
 function rowLabel(id: string): string {
+  if (id === CURVE_ID) return curveDisplay().label;
   return groupFor(id)?.label ?? displayFor(id)?.label ?? id;
 }
 
 function openCustomize(): void {
-  detailId = null;
+  if (!large) detailId = null; // agrandi : la vue détail revient à la fermeture
   customizeOpen = true;
   renderCustomize();
   showScreen();
@@ -550,6 +781,10 @@ function openCustomize(): void {
 function closeCustomize(): void {
   customizeOpen = false;
   showScreen();
+  if (large) {
+    ensureSelection();
+    void renderDetail();
+  }
 }
 
 /** Deux sections, comme dans la liste : séries de la BCE, puis calculés par Glaux. */
@@ -572,11 +807,11 @@ function renderCustomize(): void {
   });
   // Les lignes sont recréées : le clavier reste au même endroit (ligne ou pastille de pays).
   const active = document.activeElement as HTMLElement | null;
-  const chip = active?.dataset.spread;
+  const chip = active?.dataset.member;
   const focused = active?.closest<HTMLElement>(".custom-item")?.dataset.id;
   container.replaceChildren(...nodes);
   const target = chip
-    ? container.querySelector<HTMLElement>(`.chip[data-spread="${chip}"]`)
+    ? container.querySelector<HTMLElement>(`.chip[data-member="${chip}"]`)
     : focused
       ? container.querySelector<HTMLElement>(`.custom-item[data-id="${focused}"] .switch`)
       : null;
@@ -606,31 +841,34 @@ function renderCustomItem(row: RowView, lastVisible: boolean): HTMLLIElement {
 
   const body = el("div", "custom-item__body");
   body.append(el("span", "custom-item__label", label));
-  if (row.id === "spreads") body.append(renderCountryChips());
+  if (groupCandidates(row.id).length > 0) body.append(renderCountryChips(row.id));
   item.append(grip, body, toggle);
   return item;
 }
 
-/** Écarts de taux maximum sur la ligne du panneau (place disponible ; même limite dans Rust). */
-const MAX_SPREADS = 3;
+/** Pays choisis pour une ligne (taux ou écarts par pays). */
+function chosenMembers(groupId: string): string[] {
+  return dashboard?.selections?.[groupId] ?? [];
+}
 
-/** Pastilles des pays de la ligne des écarts : 3 au plus, au moins 1, dans la couleur de leur courbe. */
-function renderCountryChips(): HTMLElement {
+/** Pastilles des pays d'une ligne : 3 au plus, au moins 1, dans la couleur de leur courbe. */
+function renderCountryChips(groupId: string): HTMLElement {
   const strings = t();
-  const chosen = dashboard?.spreads ?? [];
-  const colors = new Map((groupFor("spreads")?.members ?? []).map((m) => [m.id, m.color]));
+  const chosen = chosenMembers(groupId);
+  const colors = new Map((groupFor(groupId)?.members ?? []).map((m) => [m.id, m.color]));
   const chips = el("div", "country-chips");
   chips.setAttribute("role", "group");
   chips.setAttribute("aria-label", strings.countriesAria);
-  for (const candidate of groupCandidates("spreads")) {
+  for (const candidate of groupCandidates(groupId)) {
     const on = chosen.includes(candidate.id);
     const chip = el("button", "chip", candidate.code);
     chip.type = "button";
-    chip.dataset.spread = candidate.id;
+    chip.dataset.group = groupId;
+    chip.dataset.member = candidate.id;
     chip.setAttribute("aria-pressed", String(on));
     const color = colors.get(candidate.id);
     if (on && color) chip.style.setProperty("--serie", color);
-    const full = !on && chosen.length >= MAX_SPREADS;
+    const full = !on && chosen.length >= MAX_MEMBERS;
     const last = on && chosen.length <= 1;
     if (full || last) chip.setAttribute("aria-disabled", "true");
     const name = displayFor(candidate.id)?.label ?? candidate.code;
@@ -640,21 +878,21 @@ function renderCountryChips(): HTMLElement {
   return chips;
 }
 
-/** Ajoute ou retire un pays de la ligne des écarts (Rust l'enregistre dans prefs.json). */
-function toggleSpread(id: string): void {
+/** Ajoute ou retire un pays d'une ligne (Rust l'enregistre dans prefs.json). */
+function toggleMember(groupId: string, id: string): void {
   if (!dashboard) return;
-  const current = dashboard.spreads;
+  const current = chosenMembers(groupId);
   const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
-  if (next.length === 0 || next.length > MAX_SPREADS) return;
-  const ordered = groupCandidates("spreads")
+  if (next.length === 0 || next.length > MAX_MEMBERS) return;
+  const ordered = groupCandidates(groupId)
     .map((candidate) => candidate.id)
     .filter((x) => next.includes(x));
-  dashboard = { ...dashboard, spreads: ordered };
-  setGroupSelection("spreads", ordered);
+  dashboard = { ...dashboard, selections: { ...dashboard.selections, [groupId]: ordered } };
+  setGroupSelection(groupId, ordered);
   renderCustomize();
   renderList(dashboard);
   layoutSaves += 1;
-  invoke("set_spreads", { spreads: ordered })
+  invoke("set_selection", { group: groupId, members: ordered })
     .catch((err) => console.error("Choix des pays non enregistré :", err))
     .finally(() => {
       layoutSaves -= 1;
@@ -800,8 +1038,8 @@ function setupCustomize(): void {
     }
     const target = event.target as Element | null;
     const chip = target?.closest<HTMLElement>(".chip");
-    if (chip?.dataset.spread) {
-      if (chip.getAttribute("aria-disabled") !== "true") toggleSpread(chip.dataset.spread);
+    if (chip?.dataset.group && chip.dataset.member) {
+      if (chip.getAttribute("aria-disabled") !== "true") toggleMember(chip.dataset.group, chip.dataset.member);
       return;
     }
     if (target?.closest(".country-chips")) return; // entre deux pastilles : rien
@@ -852,6 +1090,16 @@ function contentHeight(node: HTMLElement | null): number {
   return height;
 }
 
+/** Largeur du panneau normal (celle de tauri.conf.json). */
+const PANEL_WIDTH = 400;
+/** Panneau agrandi : taille visée. Rust la réduit à l'écran s'il est plus petit (resize_panel). */
+const LARGE_WIDTH = 1040;
+const LARGE_HEIGHT = 820;
+
+function largeSize(): { width: number; height: number } {
+  return { width: LARGE_WIDTH, height: LARGE_HEIGHT };
+}
+
 /** Hauteur voulue pour l'écran du moment : en-tête, agenda et pied compris. */
 function desiredHeight(): number {
   const fixed = ["panel__header", "agenda", "panel__footer"]
@@ -867,9 +1115,9 @@ function desiredHeight(): number {
 function scheduleFit(): void {
   window.clearTimeout(fitTimer);
   fitTimer = window.setTimeout(() => {
-    const height = Math.ceil(desiredHeight());
-    if (Math.abs(height - window.innerHeight) < 1) return;
-    invoke("resize_panel", { height }).catch((err) => console.error("Redimensionnement impossible :", err));
+    const size = large ? largeSize() : { width: PANEL_WIDTH, height: Math.ceil(desiredHeight()) };
+    if (Math.abs(size.height - window.innerHeight) < 1 && Math.abs(size.width - window.innerWidth) < 1) return;
+    invoke("resize_panel", size).catch((err) => console.error("Redimensionnement impossible :", err));
   }, 0);
 }
 
@@ -983,6 +1231,7 @@ function applyStaticTexts(): void {
   set("#customize-reset", strings.resetLayout, strings.resetLayoutHint);
   set("#customize-title", strings.customizeTitle);
   set("#customize-help", strings.customizeHelp);
+  renderLargeButton();
   const customize = $("customize-open");
   customize?.setAttribute("aria-label", strings.customizeAria);
   customize?.setAttribute("data-tooltip", strings.customizeHint(keys(",")));
@@ -1013,6 +1262,7 @@ function setupButtons(): void {
   $("refresh")?.addEventListener("click", refreshNow);
   $("excel")?.addEventListener("click", () => void exportExcel());
   $("customize-open")?.addEventListener("click", () => (customizeOpen ? closeCustomize() : openCustomize()));
+  $("large-toggle")?.addEventListener("click", toggleLarge);
   $("language")?.addEventListener("click", toggleLanguage);
   $("update")?.addEventListener("click", installUpdate);
 
@@ -1053,8 +1303,16 @@ function setupButtons(): void {
 // en vue détail : ⌘E enregistre l'image, ⌘C la copie (sauf si du texte est sélectionné).
 function listenForShortcuts(): void {
   window.addEventListener("keydown", (event) => {
+    if (large && !customizeOpen && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      const target = event.target as Element | null;
+      if (!target?.closest("select, input, textarea")) {
+        event.preventDefault();
+        moveSelection(event.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
+    }
     if (event.key === "Escape") {
-      if (detailId) {
+      if (detailId && !large) {
         closeDetail();
         return;
       }
@@ -1114,6 +1372,9 @@ async function start(): Promise<void> {
 
   // 2. Données déjà en cache : affichage immédiat, même hors ligne.
   render(await invoke<DashboardView>("get_dashboard"));
+  // Panneau agrandi la dernière fois : on rouvre en grand, sur le premier indicateur.
+  ensureSelection();
+  showScreen();
 
   // La date du jour change si le Mac reste allumé : date et compte à rebours
   // sont remis à jour à chaque ouverture du panneau.

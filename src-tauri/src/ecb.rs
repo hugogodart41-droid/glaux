@@ -31,10 +31,14 @@ impl SeriesDef {
     }
 }
 
-/// Séries téléchargées : les 11 indicateurs du panneau (dans leur ordre par défaut ; 5 sont
-/// masqués tant que l'utilisateur ne les affiche pas, voir `DEFAULT_HIDDEN` dans store.rs),
-/// puis les taux à 10 ans par pays, qui servent aux écarts de taux (calculés dans store.rs).
-pub const SERIES: [SeriesDef; 19] = [
+/// Séries téléchargées, dans l'ordre par défaut du panneau :
+/// - les 11 indicateurs du panneau (5 masqués tant que l'utilisateur ne les affiche pas,
+///   voir `DEFAULT_HIDDEN` dans store.rs) ;
+/// - les taux à 10 ans par pays (ligne « Taux à 10 ans par pays », 3 pays au choix), qui
+///   servent aussi aux écarts de taux (calculés dans store.rs) ;
+/// - les taux de la courbe AAA (3 mois → 30 ans), affichés ensemble sur la ligne
+///   « Courbe des taux ».
+pub const SERIES: [SeriesDef; 30] = [
     // Taux de la facilité de dépôt : le taux directeur de référence de la BCE.
     SeriesDef {
         id: "deposit_rate",
@@ -89,54 +93,8 @@ pub const SERIES: [SeriesDef; 19] = [
         step: false,
         shown: true,
     },
-    // Cours de référence EUR/USD (publié vers 16 h, heure de Francfort).
-    SeriesDef {
-        id: "eurusd",
-        flow: "EXR",
-        key: "D.USD.EUR.SP00.A",
-        frequency: Frequency::Daily,
-        step: false,
-        shown: true,
-    },
-    // Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.
-    SeriesDef {
-        id: "unemployment",
-        flow: "LFSI",
-        key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
-        frequency: Frequency::Monthly,
-        step: false,
-        shown: true,
-    },
-    // Masse monétaire M3 : croissance sur 1 an (bilans des banques, publiée vers le 28 du mois suivant).
-    SeriesDef {
-        id: "m3",
-        flow: "BSI",
-        key: "M.U2.Y.V.M30.X.I.U2.2300.Z01.A",
-        frequency: Frequency::Monthly,
-        step: false,
-        shown: true,
-    },
-    // Prêts des banques aux entreprises non financières, croissance sur 1 an
-    // (corrigée des cessions et titrisations de prêts).
-    SeriesDef {
-        id: "loans_nfc",
-        flow: "BSI",
-        key: "M.U2.Y.U.A20T.A.I.U2.2240.Z01.A",
-        frequency: Frequency::Monthly,
-        step: false,
-        shown: true,
-    },
-    // Prêts des banques aux ménages, croissance sur 1 an (même correction).
-    SeriesDef {
-        id: "loans_hh",
-        flow: "BSI",
-        key: "M.U2.Y.U.A20T.A.I.U2.2250.Z01.A",
-        frequency: Frequency::Monthly,
-        step: false,
-        shown: true,
-    },
-    // Taux d'emprunt à 10 ans par pays : statistiques de convergence (critères de Maastricht),
-    // moyennes mensuelles publiées par la BCE, environ 3 semaines après la fin du mois.
+    // Taux à 10 ans par pays (statistiques de convergence, moyennes mensuelles) : groupe
+    // « yields » (ligne « Taux à 10 ans par pays ») et base des écarts de taux (store.rs).
     SeriesDef {
         id: "yield_de",
         flow: "IRS",
@@ -201,6 +159,146 @@ pub const SERIES: [SeriesDef; 19] = [
         step: false,
         shown: false,
     },
+    // Courbe des taux AAA de la BCE (emprunts d'État de la zone euro les mieux notés, proches du
+    // sans-risque), de 3 mois à 30 ans : taux zéro coupon quotidiens (modèle de Svensson).
+    // Membres du groupe « curve » (store.rs), sans ligne propre. Le 10 ans ci-dessus, lui, porte
+    // sur toutes les notations (taux moyen de la zone euro) : ce n'est pas le même que yc_10y.
+    SeriesDef {
+        id: "yc_3m",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_6m",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_6M",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_1y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_2y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_3y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_5y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_5Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_7y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_7Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_10y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_15y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_15Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_20y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_20Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yc_30y",
+        flow: "YC",
+        key: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_30Y",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: false,
+    },
+    // Cours de référence EUR/USD (publié vers 16 h, heure de Francfort).
+    SeriesDef {
+        id: "eurusd",
+        flow: "EXR",
+        key: "D.USD.EUR.SP00.A",
+        frequency: Frequency::Daily,
+        step: false,
+        shown: true,
+    },
+    // Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.
+    SeriesDef {
+        id: "unemployment",
+        flow: "LFSI",
+        key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Masse monétaire M3 : croissance sur 1 an (bilans des banques, publiée vers le 28 du mois suivant).
+    SeriesDef {
+        id: "m3",
+        flow: "BSI",
+        key: "M.U2.Y.V.M30.X.I.U2.2300.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Prêts des banques aux entreprises non financières, croissance sur 1 an
+    // (corrigée des cessions et titrisations de prêts).
+    SeriesDef {
+        id: "loans_nfc",
+        flow: "BSI",
+        key: "M.U2.Y.U.A20T.A.I.U2.2240.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Prêts des banques aux ménages, croissance sur 1 an (même correction).
+    SeriesDef {
+        id: "loans_hh",
+        flow: "BSI",
+        key: "M.U2.Y.U.A20T.A.I.U2.2250.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Taux d'emprunt à 10 ans par pays : statistiques de convergence (critères de Maastricht),
+    // moyennes mensuelles publiées par la BCE, environ 3 semaines après la fin du mois.
 ];
 
 /// Client HTTP réutilisé pour toutes les requêtes.

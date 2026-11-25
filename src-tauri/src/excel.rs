@@ -74,8 +74,8 @@ const DAILY: [ColumnDef; 5] = [
     col("estr", "€STR (%)", "€STR (%)", Unit::Percent, 3),
     col(
         "yield_10y",
-        "Taux souverain 10 ans, zone euro (%)",
-        "10-year sovereign yield, euro area (%)",
+        "Taux souverain 10 ans, zone euro toutes notations (%)",
+        "10-year sovereign yield, euro area all ratings (%)",
         Unit::Percent,
         3,
     ),
@@ -89,13 +89,13 @@ const DAILY: [ColumnDef; 5] = [
     calc(
         col(
             "slope",
-            "Pente 10 ans − €STR (pb)",
-            "Slope 10Y − €STR (bp)",
+            "Pente 2-10 ans AAA (pb)",
+            "2-10 year slope, AAA (bp)",
             Unit::BasisPoints,
             1,
         ),
-        "Taux souverain 10 ans − €STR (dernière valeur connue ce jour-là), en points de base",
-        "10-year sovereign yield − €STR (latest value known that day), in basis points",
+        "Taux AAA à 10 ans − taux AAA à 2 ans (courbe de la BCE), en points de base",
+        "AAA 10-year rate − AAA 2-year rate (ECB yield curve), in basis points",
     ),
 ];
 
@@ -451,6 +451,10 @@ fn write_sources(
     let sheets = [
         (lang.pick("Quotidien", "Daily"), &DAILY[..]),
         (lang.pick("Mensuel", "Monthly"), &MONTHLY[..]),
+        (
+            lang.pick("Courbe des taux AAA", "AAA yield curve"),
+            &CURVE_COLUMNS[..],
+        ),
     ];
     let mut row = 5;
     for (sheet_name, defs) in sheets {
@@ -483,6 +487,22 @@ fn write_sources(
     Ok(())
 }
 
+/// Feuille « Courbe des taux AAA » : taux zéro coupon des États notés AAA par échéance (quotidien),
+/// dans l'ordre de `CURVE` (store.rs).
+const CURVE_COLUMNS: [ColumnDef; 11] = [
+    col("yc_3m", "3 mois (%)", "3 months (%)", Unit::Percent, 3),
+    col("yc_6m", "6 mois (%)", "6 months (%)", Unit::Percent, 3),
+    col("yc_1y", "1 an (%)", "1 year (%)", Unit::Percent, 3),
+    col("yc_2y", "2 ans (%)", "2 years (%)", Unit::Percent, 3),
+    col("yc_3y", "3 ans (%)", "3 years (%)", Unit::Percent, 3),
+    col("yc_5y", "5 ans (%)", "5 years (%)", Unit::Percent, 3),
+    col("yc_7y", "7 ans (%)", "7 years (%)", Unit::Percent, 3),
+    col("yc_10y", "10 ans (%)", "10 years (%)", Unit::Percent, 3),
+    col("yc_15y", "15 ans (%)", "15 years (%)", Unit::Percent, 3),
+    col("yc_20y", "20 ans (%)", "20 years (%)", Unit::Percent, 3),
+    col("yc_30y", "30 ans (%)", "30 years (%)", Unit::Percent, 3),
+];
+
 /// Construit le classeur et renvoie le fichier .xlsx (en mémoire).
 /// `downloaded` : date et heure du dernier téléchargement, déjà mises en forme.
 pub fn build_workbook(
@@ -495,6 +515,7 @@ pub fn build_workbook(
         let mut workbook = Workbook::new();
         let daily = build_table(&DAILY, series);
         let monthly = build_table(&MONTHLY, series);
+        let curve = build_table(&CURVE_COLUMNS, series);
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Quotidien", "Daily"))?;
@@ -503,6 +524,10 @@ pub fn build_workbook(
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Mensuel", "Monthly"))?;
         write_table(sheet, &MONTHLY, &monthly, lang, true)?;
+
+        let sheet = workbook.add_worksheet();
+        sheet.set_name(lang.pick("Courbe des taux AAA", "AAA yield curve"))?;
+        write_table(sheet, &CURVE_COLUMNS, &curve, lang, false)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name("Sources")?;

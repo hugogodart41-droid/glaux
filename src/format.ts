@@ -84,6 +84,36 @@ export function formatChange(indicator: IndicatorView, display: Display): string
   return text.change(unit(formatNumber(change, decimals, true)));
 }
 
+/**
+ * Valeur courte d'un membre de groupe, sans unité (déjà dans le sous-titre) :
+ * écart en points de base « 147 », taux en % « 3,42 ».
+ */
+export function shortValue(value: number | undefined, display: Display): string {
+  if (value === undefined) return "—";
+  return display.kind === "bp" ? formatNumber(value * 100, 0) : formatNumber(value, Math.min(display.decimals, 2));
+}
+
+/** Unité des valeurs courtes d'un groupe : « pb » ou « % ». */
+export function shortUnit(display: Display): string {
+  return display.kind === "bp" ? t().bpUnit : "%";
+}
+
+/**
+ * Variation courte sur 1 mois d'un membre de groupe : écart en pb « +45 », taux en points
+ * « +0,12 » ; « = » si invisible à l'arrondi. `withUnit` : « +45 pb », « +0,12 pt ».
+ */
+export function shortChange(indicator: IndicatorView, display: Display, withUnit = false): string {
+  const { latest, reference } = indicator;
+  if (!latest || !reference) return "";
+  const bp = display.kind === "bp";
+  const decimals = bp ? 0 : 2;
+  const change = (latest.value - reference.value) * (bp ? 100 : 1);
+  if (Math.abs(change) < 0.5 * 10 ** -decimals) return "=";
+  const text = formatNumber(change, decimals, true);
+  if (!withUnit) return text;
+  return bp ? t().basisPoints(text) : t().points(text);
+}
+
 /** Ligne de date sous le nom : « depuis le 16 sept. 2026 » / « since 16 Sept 2026 », « 23 nov. », « oct. 2026 ». */
 export function formatDateLine(indicator: IndicatorView, display: Display): string {
   if (indicator.since) {

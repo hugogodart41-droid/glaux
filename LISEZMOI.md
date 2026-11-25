@@ -27,16 +27,28 @@ cargo test -- --ignored --nocapture # téléchargement réel des 10 séries BCE 
 Source : API publique de la BCE (sans clé, sans compte). Les séries sont définies dans `src-tauri/src/ecb.rs` :
 les 11 indicateurs BCE du panneau, plus les taux à 10 ans de 8 pays (Allemagne, France, Italie, Espagne, Grèce,
 Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes mensuelles, publiées environ
-3 semaines après la fin du mois).
+3 semaines après la fin du mois). La BCE ne publie pas de taux quotidien par pays.
+- Taux à 10 ans par pays (V3) : une ligne (« groupe » `yields`) pour 3 pays au plus, choisis par l'utilisateur
+  (Allemagne, France, Italie par défaut), en %, variation en points ; juste après « Taux souverain 10 ans »
+  (moyenne quotidienne de la zone euro), courbes superposées en vue détail et à l'export.
 - Depuis la V3 : inflation sous-jacente et des services (jeu `HICP`), M3, crédit aux entreprises et aux ménages
   (jeu `BSI`, croissance sur 1 an, publiée vers la fin du mois suivant). Masqués par défaut (`DEFAULT_HIDDEN`).
 
 Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en cache) :
-- taux réel = taux de dépôt − inflation ; pente = taux souverain 10 ans − €STR ;
+- taux directeur réel = taux de dépôt − inflation sur 1 an (taux réel ex post) ;
+- pente 2-10 ans = taux AAA à 10 ans − taux AAA à 2 ans (courbe de la BCE), en points de base ;
 - écarts de taux avec l'Allemagne (7 pays), en points de base, affichés sur une seule ligne (« groupe » `spreads` :
   `src/indicators.ts`) pour 3 pays au plus, choisis par l'utilisateur (France, Italie, Espagne par défaut),
   avec leurs courbes superposées en vue détail et à l'export. Couleur selon la place : or, crème, bleu gris.
+- Courbe des taux AAA (V3) : jeu `YC`, échantillon `G_N_A` (États notés AAA, les plus proches du sans-risque),
+  taux zéro coupon quotidiens de 3 mois à 30 ans (11 séries `yc_*`), groupe « curve » : une ligne (forme de la
+  courbe du jour, extrémités 3 mois → 30 ans) ; vue détail et image : courbe du jour (or) et celle d'il y a 1 ou
+  5 ans (pointillés), avec la pente 2-10 ans en grand ; préparées par Rust (`get_curve`, `CURVE` dans store.rs)
+  et dessinées par `src/curve.ts`.
+- À ne pas confondre : « Taux souverain 10 ans » (`yield_10y`) = échantillon `G_N_C`, toutes notations (taux
+  moyen de la zone euro, plus élevé que le 10 ans AAA : 3,93 % contre 3,31 % le 24/11/2026).
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
+Téléchargement : 4 séries à la fois (`PARALLEL_DOWNLOADS`), 30 séries en tout.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
 Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache.
@@ -57,6 +69,7 @@ construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_
 - « Quotidien » : taux de dépôt (valeur en vigueur reportée sur chaque date), €STR, taux 10 ans, EUR/USD, pente (pb).
 - « Mensuel » : inflation (totale, sous-jacente, services), chômage, M3, crédit, taux réel, taux 10 ans des 8 pays,
   écarts avec l'Allemagne des 7 pays (pb), quel que soit l'affichage choisi dans le panneau.
+- « Courbe des taux » : taux quotidiens de chaque échéance, de 3 mois à 30 ans.
 - « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
 Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
 
@@ -68,16 +81,24 @@ Icône « réglages » dans l'en-tête (ou ⌘,) : écran « Indicateurs affich�
   restent avant les indicateurs calculés par Glaux, pour ne pas mélanger données officielles et calculs.
 - Lignes masquées par défaut (`DEFAULT_HIDDEN` dans `store.rs`) : prefs.json ne retient que l'écart avec
   l'affichage par défaut (`hidden` : lignes habituelles masquées ; `shown` : lignes masquées par défaut affichées).
-- Écarts de taux : pastilles des pays sous la ligne (3 au plus, au moins 1) ; enregistrées dans `spreads`.
-- « Par défaut » (`reset_layout`) : ordre d'origine, lignes habituelles, pays par défaut des écarts.
-- Enregistré dans `prefs.json` (`order`, `hidden`, `shown`, `spreads`) par Rust (`store.rs`, `set_layout`, `set_spreads`). Une ligne ajoutée par
+- Taux par pays et écarts de taux : pastilles des pays sous la ligne (3 au plus, au moins 1) ; enregistrées
+  dans `yields` et `spreads` (`CHOOSABLE` dans `store.rs`, commande `set_selection`).
+- « Par défaut » (`reset_layout`) : ordre d'origine, lignes habituelles, pays par défaut.
+- Enregistré dans `prefs.json` (`order`, `hidden`, `shown`, `yields`, `spreads`) par Rust (`store.rs`, `set_layout`, `set_selection`). Une ligne ajoutée par
   une future version se place en fin de sa section ; un identifiant inconnu est ignoré.
 - Les alertes, l'agenda et l'export Excel ne dépendent pas de ce choix.
 
 Hauteur du panneau : calculée par l'interface d'après son contenu (`fitPanel` dans `src/main.ts`), appliquée
 par Rust (`resize_panel` dans `main.rs`), qui replace le panneau contre l'icône. Liste : juste la place des
 lignes affichées ; vue détail : même hauteur que la liste, 560 points au minimum pour la courbe ; jamais plus
-haut que l'écran (la liste défile alors).
+grand que la zone utile de l'écran, sans la barre des menus ni le Dock / la barre des tâches (`work_area`) ;
+la liste défile alors. Le panneau se déplace en le faisant glisser par son en-tête (`data-tauri-drag-region`,
+permission `core:window:allow-start-dragging`) ; il revient contre l'icône à la prochaine ouverture.
+
+Panneau agrandi (bouton à droite de ↻, retenu d'une fois sur l'autre) : 1040 × 820 points (moins si la zone
+utile de l'écran est plus petite), liste à gauche et vue détail à droite (le premier indicateur s'ouvre d'office ; ↑ ↓ pour
+passer d'un indicateur à l'autre) ; « Indicateurs affichés » s'ouvre aussi à droite. Mise en page : grille
+`.panel.is-large` dans `src/styles.css`.
 
 ## Langue
 
@@ -142,7 +163,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/src/macos_notify.rs` | Notifications Mac (UNUserNotificationCenter, repli osascript en mode dev) |
 | `src-tauri/src/alerts.rs` | Textes des notifications : changement de taux BCE, nouvelle inflation |
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
-| `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, sources) |
+| `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, courbe des taux, sources) |
 | `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification quotidienne, installation au clic |
 | `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation), indicateurs calculés à la demande, préférences (dont lignes affichées et leur ordre) |
 | `src-tauri/tauri.conf.json` | Fenêtre, identifiant de l'app, icônes, sécurité, mises à jour |
@@ -156,6 +177,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `index.html`, `src/styles.css` | Structure et style du panneau (liste, vue détail, indicateurs affichés) |
 | `src/main.ts` | Interface : liste, vue détail, indicateurs affichés (glisser, interrupteurs), hauteur du panneau, boutons, raccourcis |
 | `src/chart.ts` | Courbes sans bibliothèque : mini-courbes, courbe de la vue détail, courbe de l'image |
+| `src/curve.ts` | Courbe des taux : écart 10 ans − 2 ans, courbes à comparer, échéances de l'axe |
 | `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée |
 | `src/agenda.ts` | Bandeau d'agenda : compte à rebours (les dates viennent de Rust) |
 | `src/indicators.ts` | Nom, précision et textes d'explication de chaque indicateur (FR / EN) |

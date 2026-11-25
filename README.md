@@ -1,20 +1,23 @@
 # Glaux
 
 **Euro area macro dashboard in your menu bar (Mac) or system tray (Windows).**
-ECB deposit rate, inflation (headline, core, services), €STR, 10-year sovereign yield, EUR/USD, unemployment, M3 and bank lending, plus a real rate, a yield-curve slope and 10-year spreads against Germany computed by Glaux. In English and French.
+ECB deposit rate, inflation (headline, core, services), €STR, 10-year sovereign yield and the AAA yield curve, EUR/USD, unemployment, M3 and bank lending, plus a real policy rate, the 2-10 year slope and 10-year spreads against Germany computed by Glaux. In English and French.
 
 Data comes straight from the European Central Bank's official API. No account, no tracking.
 
-> **En français.** Glaux est un tableau de bord macro de la zone euro, dans la barre des menus (Mac) ou la zone de notification (Windows) : taux de la BCE, inflation, €STR, taux à 10 ans, EUR/USD, chômage, taux réel, pente des taux et écarts de taux avec l'Allemagne (France, Italie, Espagne). Données officielles de la BCE, sans compte ni pistage. Installation ci-dessous ; sur Mac, la première ouverture passe par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+> **En français.** Glaux est un tableau de bord macro de la zone euro, dans la barre des menus (Mac) ou la zone de notification (Windows) : taux de la BCE, inflation, €STR, taux à 10 ans, EUR/USD, chômage, taux réel, pente des taux, taux à 10 ans et écarts avec l'Allemagne par pays (3 au choix). Données officielles de la BCE, sans compte ni pistage. Installation ci-dessous ; sur Mac, la première ouverture passe par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
 
 ## Features
 
 - 13 indicators to choose from: latest value, change over 1 month and a 1-year mini chart
+- AAA euro area yield curve from 3 months to 30 years, compared with 1 or 5 years ago, and the 2-10 year slope
+- 10-year government bond yields by country (Germany, France, Italy, Spain, Greece, Portugal, Belgium, Netherlands; monthly averages), up to three side by side
 - 10-year spreads against Germany for up to three countries of your choice (France, Italy, Spain, Greece, Portugal, Belgium, Netherlands), on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
 - Image export in three formats: portrait 1080 × 1350 (LinkedIn, Instagram), landscape 1200 × 675 (LinkedIn, X) and story 1080 × 1920 (TikTok, Reels), saved as PNG or copied to paste straight into a post
-- Excel export of all historical series (daily and monthly sheets, sources), in one click
+- Excel export of all historical series (daily, monthly and yield curve sheets, sources), in one click
 - Choose which indicators to show and drag them into your own order; the panel shrinks to fit
+- Enlarge the panel to see the list and a large chart side by side; drag it by its header to move it
 - Calendar: next ECB decision and next flash inflation release, with a reminder on the day
 - Notifications when the ECB changes rates or a new inflation figure comes out
 - Works offline with the last downloaded data

@@ -44,6 +44,8 @@ const fr = {
   excelDone: "Fichier Excel enregistré",
   excelFailed: "Échec de l'export Excel",
   customizeAria: "Choisir les indicateurs",
+  enlargePanel: "Agrandir le panneau",
+  shrinkPanel: "Réduire le panneau",
   customizeHint: (keys: string) => `Choisir et ordonner les indicateurs (${keys})`,
   quit: "Quitter",
   quitHint: (keys: string) => `Quitter Glaux (${keys})`,
@@ -76,8 +78,8 @@ const fr = {
   derivedSection: "Calculés par Glaux",
   derivedHint: "Indicateurs calculés à partir des séries de la BCE.",
   sparkHint: (low: string, high: string) => `Sur 1 an : plus bas ${low}, plus haut ${high}`,
-  /** Sous-titre d'un groupe en points de base (écarts de taux). */
-  groupSub: (date: string) => `en pb · ${date}`,
+  /** Sous-titre d'un groupe : unité de ses valeurs (« pb », « % ») et date. */
+  groupSub: (unit: string, date: string) => `en ${unit} · ${date}`,
   memberHint: (label: string, value: string, change: string) => `${label} : ${value} (${change})`,
 
   // Écran « Indicateurs affichés »
@@ -88,7 +90,7 @@ const fr = {
   resetLayoutHint: "Revenir à la liste d'origine : tous les indicateurs, dans l'ordre initial",
   keepOne: "Au moins un indicateur reste affiché",
   moveHint: "Glisser pour déplacer (ou ↑ ↓ au clavier)",
-  countriesAria: "Pays affichés dans la ligne des écarts",
+  countriesAria: "Pays affichés sur cette ligne",
   countriesFull: "3 pays au maximum : retirez-en un d'abord",
   countriesOne: "Au moins un pays reste affiché",
 
@@ -112,6 +114,16 @@ const fr = {
   readout: (date: string, value: string) => `${date} : ${value}`,
   hoverHint: "Survoler la courbe pour lire chaque mois",
   monthlyAverages: "Moyennes mensuelles",
+
+  // Courbe des taux
+  curveSlope: "Pente 2-10 ans",
+  curveSub: (date: string) => `États notés AAA · ${date}`,
+  curveEnds: "3 mois → 30 ans",
+  curveEndsHint: "Taux à 3 mois et à 30 ans de la courbe AAA du jour",
+  curveAgo: (months: number) => (months >= 24 ? `il y a ${Math.round(months / 12)} ans` : "il y a 1 an"),
+  curveHoverHint: "Survoler la courbe pour lire chaque échéance",
+  curveReadout: (tenor: string, value: string, ago: string, past: string) => `${tenor} : ${value} (${ago} : ${past})`,
+  curveSparkHint: (short: string, long: string) => `Courbe du jour : ${short} à 3 mois, ${long} à 30 ans`,
   exportImage: "Enregistrer",
   exportHint: (keys: string) => `Enregistrer l'image en PNG dans Images › Glaux (${keys})`,
   exporting: "Enregistrement…",
@@ -166,6 +178,8 @@ const en: Strings = {
   excelDone: "Excel file saved",
   excelFailed: "Excel export failed",
   customizeAria: "Choose indicators",
+  enlargePanel: "Enlarge the panel",
+  shrinkPanel: "Shrink the panel",
   customizeHint: (keys) => `Choose and reorder indicators (${keys})`,
   quit: "Quit",
   quitHint: (keys) => `Quit Glaux (${keys})`,
@@ -192,7 +206,7 @@ const en: Strings = {
   derivedSection: "Computed by Glaux",
   derivedHint: "Indicators computed from ECB series.",
   sparkHint: (low, high) => `Past year: low ${low}, high ${high}`,
-  groupSub: (date) => `in bp · ${date}`,
+  groupSub: (unit, date) => `in ${unit} · ${date}`,
   memberHint: (label, value, change) => `${label}: ${value} (${change})`,
 
   customizeTitle: "Displayed indicators",
@@ -202,7 +216,7 @@ const en: Strings = {
   resetLayoutHint: "Back to the original list: every indicator, in the original order",
   keepOne: "At least one indicator stays visible",
   moveHint: "Drag to move (or ↑ ↓ on the keyboard)",
-  countriesAria: "Countries shown in the spreads row",
+  countriesAria: "Countries shown in this row",
   countriesFull: "3 countries at most: remove one first",
   countriesOne: "At least one country stays visible",
 
@@ -223,6 +237,15 @@ const en: Strings = {
   readout: (date, value) => `${date}: ${value}`,
   hoverHint: "Hover over the chart to read each month",
   monthlyAverages: "Monthly averages",
+
+  curveSlope: "2-10Y slope",
+  curveSub: (date) => `AAA-rated governments · ${date}`,
+  curveEnds: "3M → 30Y",
+  curveEndsHint: "3-month and 30-year rates of today's AAA curve",
+  curveAgo: (months) => (months >= 24 ? `${Math.round(months / 12)} years ago` : "1 year ago"),
+  curveHoverHint: "Hover over the chart to read each maturity",
+  curveReadout: (tenor, value, ago, past) => `${tenor}: ${value} (${ago}: ${past})`,
+  curveSparkHint: (short, long) => `Today's curve: ${short} at 3 months, ${long} at 30 years`,
   exportImage: "Save",
   exportHint: (keys) => `Save the image as PNG in Pictures › Glaux (${keys})`,
   exporting: "Saving…",

@@ -50,6 +50,9 @@ body {
   justify-content: space-between;
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--ligne);
+  /* Poignée de déplacement du panneau : pas de sélection de texte en glissant. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .brand {
@@ -324,8 +327,19 @@ body {
 
 /* Icônes sans ligne de base : centrées sur la hauteur du texte voisin. */
 #excel,
-#customize-open {
+#customize-open,
+#large-toggle {
   align-self: center;
+}
+
+/* Bouton agrandir / réduire : une seule des deux icônes. */
+#large-toggle .icon-shrink,
+.panel.is-large #large-toggle .icon-enlarge {
+  display: none;
+}
+
+.panel.is-large #large-toggle .icon-shrink {
+  display: block;
 }
 
 /* Icône « réglages » : les curseurs masquent la ligne qu'ils recouvrent. */
@@ -802,4 +816,70 @@ body {
 
 .chip[aria-pressed="false"][aria-disabled="true"] {
   opacity: 0.4;
+}
+
+/* ---------- Panneau agrandi : liste à gauche, vue détail à droite ---------- */
+
+.panel.is-large {
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "header header"
+    "agenda agenda"
+    "list main"
+    "footer footer";
+}
+
+.panel.is-large .panel__header {
+  grid-area: header;
+}
+
+.panel.is-large .agenda {
+  grid-area: agenda;
+}
+
+.panel.is-large .indicators {
+  grid-area: list;
+  border-right: 1px solid var(--ligne);
+}
+
+.panel.is-large .detail,
+.panel.is-large .customize {
+  grid-area: main;
+  min-height: 0;
+  border-bottom: none;
+}
+
+.panel.is-large .detail {
+  padding: 16px 28px 10px;
+  gap: 12px;
+}
+
+.panel.is-large .panel__footer {
+  grid-area: footer;
+  border-top: 1px solid var(--ligne);
+}
+
+/* Pas de retour à la liste : elle est déjà à gauche. */
+.panel.is-large #back {
+  display: none;
+}
+
+.panel.is-large .detail__actions {
+  margin-left: auto;
+}
+
+.panel.is-large .detail__title {
+  font-size: 22px;
+}
+
+.panel.is-large .detail__value {
+  font-size: 30px;
+}
+
+/* Ligne ouverte à droite : fond plus clair et filet or. */
+.panel.is-large .indicator.is-selected {
+  background: var(--nuit-clair);
+  box-shadow: inset 3px 0 0 var(--or);
 }

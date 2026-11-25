@@ -11,16 +11,19 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { exportAgendaLine } from "./agenda";
 import { COLORS, drawChartOnCanvas, type CanvasChartStyle, type ChartSeries } from "./chart";
+import { curveChart, type CurveView } from "./curve";
 import {
   formatChange,
   formatDataDate,
   formatFullPeriod,
-  formatNumber,
   formatValue,
   parsePeriod,
+  shortChange,
+  shortUnit,
+  shortValue,
 } from "./format";
 import { locale, t } from "./i18n";
-import type { Display, GroupDisplay, GroupMember } from "./indicators";
+import { curveDisplay, curveSlopeDisplay, type Display, type GroupDisplay, type GroupMember } from "./indicators";
 import type { AgendaData, IndicatorView, Observation } from "./types";
 
 export type ExportFormat = "portrait" | "landscape" | "story";
@@ -268,6 +271,24 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/**
+ * Grande valeur en or, puis les détails (variation, date…) sur une ligne, ou une par détail
+ * si la ligne dépasse. Renvoie le nombre de lignes de détails.
+ */
+function drawValueBlock(ctx: CanvasRenderingContext2D, layout: Layout, value: string, details: string[]): number {
+  ctx.textAlign = "left";
+  ctx.fillStyle = COLORS.or;
+  ctx.font = `700 ${layout.value.size}px ${SANS}`;
+  ctx.fillText(value, layout.value.x, layout.value.y);
+  ctx.fillStyle = COLORS.creme;
+  ctx.font = `${layout.change.size}px ${SANS}`;
+  const kept = details.filter(Boolean);
+  const split = layout.change.lines > 1 && ctx.measureText(kept.join("  ·  ")).width > layout.change.maxWidth;
+  const lines = split ? kept : [kept.join("  ·  ")];
+  lines.forEach((line, i) => ctx.fillText(line, layout.change.x, layout.change.y + i * layout.change.lineHeight));
+  return lines.length;
+}
+
 /** Image d'un indicateur : grande valeur, variation, courbe dorée. Renvoie le PNG. */
 export async function renderExportImage(
   indicator: IndicatorView,
@@ -284,23 +305,17 @@ export async function renderExportImage(
 
   // Valeur, puis variation et date de la donnée (sur deux lignes si besoin).
   const latest = indicator.latest;
-  ctx.textAlign = "left";
-  ctx.fillStyle = COLORS.or;
-  ctx.font = `700 ${layout.value.size}px ${SANS}`;
-  ctx.fillText(latest ? formatValue(latest.value, display) : "—", layout.value.x, layout.value.y);
-  ctx.fillStyle = COLORS.creme;
-  ctx.font = `${layout.change.size}px ${SANS}`;
-  const details = [formatChange(indicator, display), formatDataDate(indicator, display)].filter(Boolean);
-  const split = layout.change.lines > 1 && ctx.measureText(details.join("  ·  ")).width > layout.change.maxWidth;
-  const lines = split ? details : [details.join("  ·  ")];
-  lines.forEach((line, i) => ctx.fillText(line, layout.change.x, layout.change.y + i * layout.change.lineHeight));
+  const lineCount = drawValueBlock(ctx, layout, latest ? formatValue(latest.value, display) : "—", [
+    formatChange(indicator, display),
+    formatDataDate(indicator, display),
+  ]);
 
   // Taux de dépôt et inflation : prochain rendez-vous de l'agenda, en or, sous la variation.
   const agendaLine = exportAgendaLine(indicator.id, agenda);
   if (agendaLine) {
     ctx.fillStyle = COLORS.or;
     ctx.font = `600 ${layout.agenda.size}px ${SANS}`;
-    const shift = (lines.length - 1) * layout.change.lineHeight;
+    const shift = (lineCount - 1) * layout.change.lineHeight;
     ctx.fillText(agendaLine, layout.agenda.x, layout.agenda.y + shift);
   }
 
@@ -312,17 +327,24 @@ export async function renderExportImage(
 /** Un membre de groupe prêt à dessiner : sa couleur, ses données, sa présentation. */
 export type ExportMember = { member: GroupMember; indicator: IndicatorView; display: Display };
 
-/** Variation sur 1 mois en points de base, courte : « +51 pb ». */
-function shortChange(indicator: IndicatorView): string {
-  if (!indicator.latest || !indicator.reference) return "";
-  const change = (indicator.latest.value - indicator.reference.value) * 100;
-  return Math.abs(change) < 0.5 ? "=" : `${formatNumber(change, 0, true)} ${t().bpUnit}`;
-}
-
 /** Une colonne par pays : pastille + nom, grande valeur, variation (portrait, story). */
 function drawGroupColumns(ctx: CanvasRenderingContext2D, layout: Layout, members: ExportMember[]): void {
   const { group, margin } = layout;
   const columnWidth = group.width / Math.max(1, members.length);
+  // Taille des grandes valeurs : celle prévue, réduite si « 3,42 % » déborde de sa colonne
+  // (taux en % plus larges que les écarts en pb). Même taille pour tous les pays.
+  const widest = Math.max(
+    0,
+    ...members.map(({ indicator, display }) => {
+      ctx.font = `700 ${group.value}px ${SANS}`;
+      const value = ctx.measureText(shortValue(indicator.latest?.value, display)).width;
+      ctx.font = `600 ${group.unit}px ${SANS}`;
+      return value + group.unit * 0.25 + ctx.measureText(shortUnit(display)).width;
+    }),
+  );
+  const fit = Math.min(1, (columnWidth - 28) / Math.max(1, widest));
+  const valueSize = Math.floor(group.value * fit);
+  const unitSize = Math.floor(group.unit * fit);
   members.forEach(({ member, indicator, display }, k) => {
     const left = margin + k * columnWidth;
     const dot = group.name * 0.34;
@@ -335,16 +357,17 @@ function drawGroupColumns(ctx: CanvasRenderingContext2D, layout: Layout, members
     ctx.font = `600 ${group.name}px ${SANS}`;
     ctx.fillText(display.label, left + dot * 2 + group.name * 0.4, group.top);
 
+    // Grande valeur sans unité (« 147 », « 3,42 »), puis l'unité en plus petit (« pb », « % »).
     const latest = indicator.latest;
-    const value = latest ? formatNumber(latest.value * 100, 0) : "—";
+    const value = shortValue(latest?.value, display);
     const valueY = group.top + group.value * 1.04;
     ctx.fillStyle = member.color;
-    ctx.font = `700 ${group.value}px ${SANS}`;
-    ctx.fillText(value, left - group.value * 0.04, valueY);
+    ctx.font = `700 ${valueSize}px ${SANS}`;
+    ctx.fillText(value, left - valueSize * 0.04, valueY);
     if (latest) {
       const valueWidth = ctx.measureText(value).width;
-      ctx.font = `600 ${group.unit}px ${SANS}`;
-      ctx.fillText(t().bpUnit, left + valueWidth + group.unit * 0.25, valueY);
+      ctx.font = `600 ${unitSize}px ${SANS}`;
+      ctx.fillText(shortUnit(display), left + valueWidth + unitSize * 0.25, valueY);
     }
 
     ctx.fillStyle = COLORS.cremeDoux;
@@ -356,9 +379,23 @@ function drawGroupColumns(ctx: CanvasRenderingContext2D, layout: Layout, members
 /** Une ligne par pays : pastille + nom, valeur, variation courte (paysage). */
 function drawGroupRows(ctx: CanvasRenderingContext2D, layout: Layout, members: ExportMember[]): void {
   const { group, margin } = layout;
+  const dot = group.name * 0.3;
+  const nameX = margin + dot * 2 + 10;
+  // Colonnes communes, poussées à droite si un nom (« Allemagne », « Netherlands ») ou une
+  // valeur (« 4,89 % ») est plus large que prévu : rien ne se chevauche.
+  ctx.font = `600 ${group.name}px ${SANS}`;
+  const nameWidth = Math.max(0, ...members.map(({ display }) => ctx.measureText(display.label).width));
+  const valueX = Math.max(margin + group.width * 0.36, nameX + nameWidth + 18);
+  const valueWidths = members.map(({ indicator, display }) => {
+    ctx.font = `700 ${group.value}px ${SANS}`;
+    const value = ctx.measureText(shortValue(indicator.latest?.value, display)).width;
+    ctx.font = `600 ${group.unit}px ${SANS}`;
+    return value + 6 + ctx.measureText(shortUnit(display)).width;
+  });
+  const changeX = Math.max(margin + group.width * 0.72, valueX + Math.max(0, ...valueWidths) + 22);
+
   members.forEach(({ member, indicator, display }, k) => {
     const y = group.top + k * group.rowHeight;
-    const dot = group.name * 0.3;
     ctx.fillStyle = member.color;
     ctx.beginPath();
     ctx.arc(margin + dot, y - group.name * 0.34, dot, 0, Math.PI * 2);
@@ -366,28 +403,27 @@ function drawGroupRows(ctx: CanvasRenderingContext2D, layout: Layout, members: E
     ctx.textAlign = "left";
     ctx.fillStyle = COLORS.creme;
     ctx.font = `600 ${group.name}px ${SANS}`;
-    ctx.fillText(display.label, margin + dot * 2 + 10, y);
+    ctx.fillText(display.label, nameX, y);
 
     // Valeur alignée sur une colonne commune, puis l'unité et la variation.
-    const valueX = margin + group.width * 0.36;
     const latest = indicator.latest;
-    const value = latest ? formatNumber(latest.value * 100, 0) : "—";
+    const value = shortValue(latest?.value, display);
     ctx.fillStyle = member.color;
     ctx.font = `700 ${group.value}px ${SANS}`;
     ctx.fillText(value, valueX, y + 2);
     const valueWidth = ctx.measureText(value).width;
     if (latest) {
       ctx.font = `600 ${group.unit}px ${SANS}`;
-      ctx.fillText(t().bpUnit, valueX + valueWidth + 6, y + 2);
+      ctx.fillText(shortUnit(display), valueX + valueWidth + 6, y + 2);
     }
     ctx.fillStyle = COLORS.cremeDoux;
     ctx.font = `${group.change}px ${SANS}`;
-    ctx.fillText(shortChange(indicator), margin + group.width * 0.72, y);
+    ctx.fillText(shortChange(indicator, display, true), changeX, y);
   });
 }
 
 /**
- * Image d'un groupe (écarts de taux) : une valeur par pays dans la couleur de sa courbe,
+ * Image d'un groupe (taux ou écarts par pays) : une valeur par pays dans la couleur de sa courbe,
  * puis les courbes superposées. Renvoie le PNG.
  */
 export async function renderGroupExportImage(
@@ -418,6 +454,95 @@ export async function renderGroupExportImage(
   const display = (dated ?? members[0])?.display;
   if (display) drawChartBlock(ctx, layout, series, display, months);
   drawFooter(ctx, layout, group.explanation);
+  return toPng(canvas);
+}
+
+/**
+ * Légende de la courbe des taux, à la place de la période : un point or pour la courbe du jour,
+ * un trait en pointillés crème pour celle de comparaison, chacun suivi de sa date.
+ */
+function drawCurveLegend(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  items: { color: string; dashed: boolean; text: string }[],
+): void {
+  const { period } = layout;
+  const size = period.size;
+  const middle = period.y - size * 0.34;
+  let x = period.x;
+  ctx.textAlign = "left";
+  ctx.font = `600 ${size}px ${SANS}`;
+  for (const { color, dashed, text } of items) {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    let marker: number;
+    if (dashed) {
+      marker = size * 1.5;
+      ctx.lineWidth = Math.max(2, size * 0.14);
+      ctx.setLineDash([size * 0.3, size * 0.25]);
+      ctx.beginPath();
+      ctx.moveTo(x, middle);
+      ctx.lineTo(x + marker, middle);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      marker = size * 0.6;
+      ctx.beginPath();
+      ctx.arc(x + marker / 2, middle, marker / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    x += marker + size * 0.45;
+    ctx.fillStyle = COLORS.creme;
+    ctx.fillText(text, x, period.y);
+    x += ctx.measureText(text).width + size * 1.4;
+  }
+}
+
+/**
+ * Image de la courbe des taux : écart 10 ans − 2 ans en grand, courbe du jour (or) et celle
+ * d'il y a `months` mois (pointillés crème), une échéance par graduation. Renvoie le PNG.
+ */
+export async function renderCurveExportImage(
+  curve: CurveView,
+  slope: IndicatorView | null,
+  months: number,
+  format: ExportFormat,
+): Promise<Uint8Array> {
+  const layout = LAYOUTS[format];
+  const display = curveDisplay();
+  const slopeDisplay = curveSlopeDisplay();
+  const { canvas, ctx } = newCanvas(layout);
+  drawHeader(ctx, layout);
+  drawTitle(ctx, layout, display.label, display.hint);
+
+  // Grande valeur : la pente 2-10 ans (indicateur « slope »), avec sa variation sur 1 mois.
+  const hasSlope = slope?.latest && slopeDisplay;
+  drawValueBlock(ctx, layout, hasSlope ? formatValue(slope.latest!.value, slopeDisplay) : "—", [
+    hasSlope ? `${t().curveSlope}  ·  ${formatChange(slope!, slopeDisplay)}` : "",
+    curve.latest ? formatFullPeriod(curve.latest.date, false) : "",
+  ]);
+
+  const legend = [
+    curve.latest ? { color: COLORS.or, dashed: false, text: formatFullPeriod(curve.latest.date, false) } : null,
+    curve.past
+      ? { color: COLORS.creme, dashed: true, text: `${formatFullPeriod(curve.past.date, false)} (${t().curveAgo(months)})` }
+      : null,
+  ].flatMap((item) => (item ? [item] : []));
+  drawCurveLegend(ctx, layout, legend);
+
+  const { series, labels } = curveChart(curve);
+  const { chart } = layout;
+  drawChartOnCanvas(
+    ctx,
+    series,
+    display,
+    months,
+    { left: chart.left, top: chart.top, width: chart.width, height: chart.height },
+    `${chart.font}px ${SANS}`,
+    chart.style,
+    labels,
+  );
+  drawFooter(ctx, layout, display.explanation);
   return toPng(canvas);
 }
 

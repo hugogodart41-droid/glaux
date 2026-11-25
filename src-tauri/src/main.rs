@@ -25,8 +25,8 @@ use alerts::Alert;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, State,
-    WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalSize, Runtime,
+    State, WebviewWindow, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 // Module de notifications de Tauri : Windows et Linux seulement (Mac : macos_notify).
@@ -55,9 +55,8 @@ const GAP: f64 = 6.0;
 /// Hauteur minimale du panneau (en points) : en-tête, une ligne et pied.
 const MIN_PANEL_HEIGHT: f64 = 160.0;
 
-/// Place laissée à la barre des menus (Mac) ou des tâches (Windows) quand le panneau
-/// est aussi haut que l'écran (en points).
-const SCREEN_MARGIN: f64 = 80.0;
+/// Largeur minimale du panneau (en points) : celle du panneau normal.
+const MIN_PANEL_WIDTH: f64 = 400.0;
 
 /// Fréquence à laquelle le fil d'arrière-plan vérifie si les données sont trop vieilles.
 const CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -102,77 +101,118 @@ fn place_panel(app: &AppHandle, window: &WebviewWindow) {
     }
 }
 
-/// Place le panneau contre l'icône, pour une taille donnée (en pixels physiques) :
-/// - icône en haut de l'écran (barre des menus Mac) → panneau en dessous ;
-/// - icône en bas (barre des tâches Windows) → panneau au-dessus.
+/// Écran qui contient un point (en pixels physiques).
 ///
-/// Renvoie faux si la position de l'icône est encore inconnue (panneau laissé en place).
-fn place_panel_sized(app: &AppHandle, window: &WebviewWindow, panel: PhysicalSize<f64>) -> bool {
-    let tray = app
-        .state::<PanelState>()
+/// Pas `monitor_from_point` de Tauri : sur Mac, il compare ces pixels physiques à des points
+/// (écran Retina = 2 pixels par point) et ne trouve aucun écran dès que l'icône est dans la
+/// moitié droite de la barre des menus. Le panneau n'était alors jamais recalé sur l'écran.
+fn monitor_at(window: &WebviewWindow, x: f64, y: f64) -> Option<Monitor> {
+    let inside = |m: &Monitor| {
+        let (p, s) = (m.position(), m.size());
+        let (left, top) = (p.x as f64, p.y as f64);
+        x >= left && x < left + s.width as f64 && y >= top && y < top + s.height as f64
+    };
+    window
+        .available_monitors()
+        .ok()
+        .and_then(|monitors| monitors.into_iter().find(inside))
+        .or_else(|| window.current_monitor().ok().flatten())
+}
+
+/// Position et taille de l'icône, si on l'a déjà vue passer (survol ou clic).
+fn tray_rect(app: &AppHandle) -> Option<(PhysicalPosition<f64>, PhysicalSize<f64>)> {
+    app.state::<PanelState>()
         .tray_rect
         .lock()
         .ok()
-        .and_then(|saved| *saved);
-    let Some((tray_pos, tray_size)) = tray else {
-        return false;
-    };
-    let Ok(Some(monitor)) = window.monitor_from_point(tray_pos.x, tray_pos.y) else {
-        return false;
-    };
+        .and_then(|saved| *saved)
+}
 
-    let scale = monitor.scale_factor();
-    let gap = GAP * scale;
-    let (panel_w, panel_h) = (panel.width, panel.height);
-    let screen_x = monitor.position().x as f64;
-    let screen_y = monitor.position().y as f64;
-    let screen_w = monitor.size().width as f64;
-    let screen_h = monitor.size().height as f64;
-
-    // Horizontal : centré sous l'icône, sans dépasser du bord de l'écran.
-    let mut x = tray_pos.x + tray_size.width / 2.0 - panel_w / 2.0;
-    let (min_x, max_x) = (screen_x + gap, screen_x + screen_w - panel_w - gap);
-    if min_x <= max_x {
-        x = x.clamp(min_x, max_x);
+/// Écran du panneau : celui de l'icône (ou, à défaut, celui où est la fenêtre).
+fn panel_monitor(app: &AppHandle, window: &WebviewWindow) -> Option<Monitor> {
+    match tray_rect(app) {
+        Some((pos, size)) => {
+            monitor_at(window, pos.x + size.width / 2.0, pos.y + size.height / 2.0)
+        }
+        None => window.current_monitor().ok().flatten(),
     }
+}
 
-    // Vertical : selon que l'icône est dans la moitié haute ou basse de l'écran.
-    let icon_on_top = tray_pos.y < screen_y + screen_h / 2.0;
-    let y = if icon_on_top {
+/// Place le panneau contre l'icône, pour une taille donnée (en pixels physiques) :
+/// - icône en haut de l'écran (barre des menus Mac) → panneau en dessous ;
+/// - icône en bas (barre des tâches Windows) → panneau au-dessus ;
+/// - toujours dans la zone utile de l'écran (sans barre des menus, Dock ni barre des tâches).
+///
+/// Renvoie faux si la position de l'icône est encore inconnue (panneau laissé en place).
+fn place_panel_sized(app: &AppHandle, window: &WebviewWindow, panel: PhysicalSize<f64>) -> bool {
+    let Some((tray_pos, tray_size)) = tray_rect(app) else {
+        return false;
+    };
+    let Some(monitor) = panel_monitor(app, window) else {
+        return false;
+    };
+
+    let gap = GAP * monitor.scale_factor();
+    let (panel_w, panel_h) = (panel.width, panel.height);
+    let area = monitor.work_area();
+    let (area_x, area_y) = (area.position.x as f64, area.position.y as f64);
+    let (area_w, area_h) = (area.size.width as f64, area.size.height as f64);
+    let screen_mid = monitor.position().y as f64 + monitor.size().height as f64 / 2.0;
+
+    // Horizontal : centré sous l'icône, sans sortir de la zone utile.
+    let x = (tray_pos.x + tray_size.width / 2.0 - panel_w / 2.0)
+        .min(area_x + area_w - panel_w - gap)
+        .max(area_x + gap);
+
+    // Vertical : selon que l'icône est dans la moitié haute ou basse de l'écran,
+    // puis ramené dans la zone utile (le Dock ne recouvre pas le bas du panneau).
+    let below_icon = tray_pos.y < screen_mid;
+    let y = if below_icon {
         tray_pos.y + tray_size.height + gap
     } else {
         tray_pos.y - panel_h - gap
-    };
+    }
+    .min(area_y + area_h - panel_h - gap)
+    .max(area_y + gap);
 
     let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
     true
 }
 
-/// Ajuste la hauteur du panneau à son contenu (calculée par l'interface, en points),
-/// sans le décoller de l'icône : il raccourcit quand on masque des indicateurs.
+/// Ajuste la taille du panneau (calculée par l'interface, en points) sans le décoller de
+/// l'icône : il raccourcit quand on masque des indicateurs ; `width` : panneau agrandi.
 ///
 /// Mac : changer la taille d'une fenêtre garde son coin bas-gauche fixe ; le panneau
 /// est donc replacé juste après, pour que son bord haut reste sous l'icône.
 #[tauri::command]
-fn resize_panel(app: AppHandle, height: f64) -> Result<(), String> {
-    if !height.is_finite() {
-        return Err("hauteur invalide".into());
+fn resize_panel(app: AppHandle, height: f64, width: Option<f64>) -> Result<(), String> {
+    if !height.is_finite() || width.is_some_and(|w| !w.is_finite()) {
+        return Err("taille invalide".into());
     }
     let window = app.get_webview_window(PANEL).ok_or("panneau introuvable")?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let current = window.inner_size().map_err(|e| e.to_string())?;
-    let width = current.width as f64 / scale;
 
-    // Pas plus haut que l'écran : au-delà, la liste défile.
-    let screen = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .map(|m| m.size().height as f64 / m.scale_factor())
-        .unwrap_or(900.0);
-    let max = (screen - SCREEN_MARGIN).max(MIN_PANEL_HEIGHT);
-    let height = height.round().clamp(MIN_PANEL_HEIGHT, max);
-    if (current.height as f64 / scale - height).abs() < 1.0 {
+    // Pas plus grand que la zone utile de l'écran (sans barre des menus ni Dock) :
+    // au-delà, la liste défile.
+    let area = panel_monitor(&app, &window)
+        .map(|m| {
+            let (area, s) = (m.work_area(), m.scale_factor());
+            (area.size.width as f64 / s, area.size.height as f64 / s)
+        })
+        .unwrap_or((1440.0, 820.0));
+    let max_height = (area.1 - 2.0 * GAP).max(MIN_PANEL_HEIGHT);
+    let height = height.round().clamp(MIN_PANEL_HEIGHT, max_height);
+    // Largeur : celle demandée (panneau agrandi) ou la largeur actuelle.
+    let width = match width {
+        Some(w) => w
+            .round()
+            .clamp(MIN_PANEL_WIDTH, (area.0 - 2.0 * GAP).max(MIN_PANEL_WIDTH)),
+        None => current.width as f64 / scale,
+    };
+    let same_height = (current.height as f64 / scale - height).abs() < 1.0;
+    let same_width = (current.width as f64 / scale - width).abs() < 1.0;
+    if same_height && same_width {
         return Ok(()); // déjà à la bonne taille
     }
 
@@ -461,6 +501,12 @@ fn set_layout(app: AppHandle, order: Vec<String>, hidden: Vec<String>) -> Result
     Ok(())
 }
 
+/// Courbe des taux du jour et celle de `months` mois plus tôt (vue détail, image exportée).
+#[tauri::command]
+fn get_curve(store: State<'_, Store>, months: u32) -> store::CurveView {
+    store.curve(months)
+}
+
 /// « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut des écarts de taux.
 #[tauri::command]
 fn reset_layout(app: AppHandle) -> Result<(), String> {
@@ -469,10 +515,10 @@ fn reset_layout(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Pays de la ligne des écarts de taux (1 à 3, ex. « spread_gr »).
+/// Pays d'une ligne à choix (1 à 3) : « yields » (ex. « yield_fr ») ou « spreads » (« spread_gr »).
 #[tauri::command]
-fn set_spreads(app: AppHandle, spreads: Vec<String>) -> Result<(), String> {
-    app.state::<Store>().set_spreads(&spreads)?;
+fn set_selection(app: AppHandle, group: String, members: Vec<String>) -> Result<(), String> {
+    app.state::<Store>().set_selection(&group, &members)?;
     notify(&app);
     Ok(())
 }
@@ -593,7 +639,8 @@ fn main() {
             set_language,
             set_layout,
             reset_layout,
-            set_spreads,
+            set_selection,
+            get_curve,
             resize_panel,
             install_update,
             quit_app

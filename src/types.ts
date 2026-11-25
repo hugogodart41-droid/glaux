@@ -8,7 +8,7 @@ export type IndicatorView = {
   id: string;
   /** Vrai pour un indicateur calculé par Glaux (taux réel, pente). */
   derived: boolean;
-  /** Groupe affiché sur une seule ligne (ex. « spreads » : écarts France, Italie, Espagne). */
+  /** Groupe affiché sur une seule ligne (ex. « yields » : taux à 10 ans Allemagne, France, Italie). */
   group: string | null;
   latest: Observation | null;
   /** Valeur un mois plus tôt (base de la variation). */
@@ -19,7 +19,7 @@ export type IndicatorView = {
   spark: number[];
 };
 
-/** Une ligne du panneau : indicateur ou groupe (« spreads »), dans l'ordre choisi. */
+/** Une ligne du panneau : indicateur ou groupe (« yields », « spreads », « curve »), dans l'ordre choisi. */
 export type RowView = {
   id: string;
   /** Ligne calculée par Glaux (section « Calculés par Glaux »). */
@@ -35,8 +35,8 @@ export type DashboardView = {
   indicators: IndicatorView[];
   /** Lignes du panneau dans l'ordre choisi, masquées comprises. */
   rows: RowView[];
-  /** Pays affichés dans la ligne des écarts de taux (1 à 3, ex. « spread_fr »). */
-  spreads: string[];
+  /** Pays affichés dans chaque ligne à choix (1 à 3) : { yields: ["yield_de", …], spreads: ["spread_fr", …] }. */
+  selections: Record<string, string[]>;
   /** Dernière actualisation complète réussie (millisecondes). */
   updatedAt: number | null;
   refreshing: boolean;

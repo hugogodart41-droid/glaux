@@ -132,7 +132,14 @@ export function linePath(
 }
 
 /** Une courbe d'un graphique (vue détail ou image exportée). */
-export type ChartSeries = { points: Observation[]; color: string };
+/**
+ * Une courbe : ses points et sa couleur. `dashed` : trait en pointillés, sans point final
+ * (courbe de comparaison, ex. la courbe des taux d'il y a un an).
+ */
+export type ChartSeries = { points: Observation[]; color: string; dashed?: boolean };
+
+/** Étiquettes de l'axe horizontal imposées (ex. échéances « 3M … 30A ») : rang du point et texte. */
+export type AxisLabel = { index: number; text: string };
 
 /**
  * Dates de toutes les courbes (réunies, dans l'ordre) et valeur de chaque courbe à chacune
@@ -237,6 +244,7 @@ export function renderDetailChart(
   width: number,
   height: number,
   onHover: (date: string | null, values: (number | null)[]) => void,
+  axisLabels?: AxisLabel[],
 ): SVGSVGElement {
   const root = svg("svg", { class: "chart", width, height, viewBox: `0 0 ${width} ${height}` });
   const { dates, rows } = alignSeries(series);
@@ -248,10 +256,12 @@ export function renderDetailChart(
 
   // Marge à gauche pour les valeurs des graduations : la courbe ne les recouvre jamais.
   const gutter = maxTextWidth(tickTexts, DETAIL_LABEL_FONT);
+  // Étiquettes imposées (ex. « 30A ») centrées sous le dernier point : un peu plus de marge à droite.
+  const right = axisLabels ? 14 : DETAIL_PAD.right;
   const box: Box = {
     left: DETAIL_PAD.left + gutter + DETAIL_LABEL_GAP,
     top: DETAIL_PAD.top,
-    width: width - DETAIL_PAD.left - gutter - DETAIL_LABEL_GAP - DETAIL_PAD.right,
+    width: width - DETAIL_PAD.left - gutter - DETAIL_LABEL_GAP - right,
     height: height - DETAIL_PAD.top - DETAIL_PAD.bottom,
   };
   const { x, y } = project(dates.map(() => 0), box, scale);
@@ -273,8 +283,8 @@ export function renderDetailChart(
     root.append(label);
   });
 
-  // Étiquettes de temps sous la courbe.
-  for (const { index, text } of timeLabels(dates, months)) {
+  // Étiquettes de temps (ou imposées, ex. échéances) sous la courbe.
+  for (const { index, text } of axisLabels ?? timeLabels(dates, months)) {
     const tx = x(index);
     root.append(svg("line", { x1: tx, x2: tx, y1: bottom, y2: bottom + 3, class: "chart__grid" }));
     const label = svg("text", { x: tx, y: height - 4, class: "chart__label", "text-anchor": "middle" });
@@ -310,11 +320,12 @@ export function renderDetailChart(
     const attrs: Record<string, string> = { d: linePath(values, x, y, !!display.step), class: "chart__line" };
     if (!single) {
       attrs.class = "chart__line chart__line--multi";
-      attrs.style = `stroke: ${series[k].color}`;
+      attrs.style = `stroke: ${series[k].color}${series[k].dashed ? "; stroke-dasharray: 4 4" : ""}`;
     }
     root.append(svg("path", attrs));
   });
   rows.forEach((values, k) => {
+    if (series[k].dashed) return;
     const end = lastIndex(values);
     const value = values[end];
     if (value === null || value === undefined) return;
@@ -384,6 +395,7 @@ export function drawChartOnCanvas(
   frame: Box,
   font: string,
   style: CanvasChartStyle = { line: 5, dot: 9, labelGap: 44 },
+  axisLabels?: AxisLabel[],
 ): void {
   const { dates, rows } = alignSeries(series);
   const all = rows.flat().filter((v): v is number => v !== null);
@@ -421,9 +433,9 @@ export function drawChartOnCanvas(
   });
   ctx.textBaseline = "alphabetic";
 
-  // Étiquettes de temps.
+  // Étiquettes de temps (ou imposées, ex. échéances).
   ctx.textAlign = "center";
-  for (const { index, text } of timeLabels(dates, months)) {
+  for (const { index, text } of axisLabels ?? timeLabels(dates, months)) {
     ctx.fillText(text, x(index), bottom + style.labelGap);
   }
 
@@ -449,9 +461,12 @@ export function drawChartOnCanvas(
   rows.forEach((values, k) => {
     ctx.strokeStyle = series[k].color;
     ctx.lineWidth = single ? style.line : style.line * 0.8;
+    ctx.setLineDash(series[k].dashed ? [style.line * 1.6, style.line * 1.8] : []);
     ctx.stroke(new Path2D(linePath(values, x, y, !!display.step)));
   });
+  ctx.setLineDash([]);
   rows.forEach((values, k) => {
+    if (series[k].dashed) return;
     const end = lastIndex(values);
     const value = values[end];
     if (value === null || value === undefined) return;
