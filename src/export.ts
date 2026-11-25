@@ -1,22 +1,137 @@
-// Image exportée aux couleurs de Glaux (1080 × 1350, format portrait 4:5 :
-// bien affiché sur LinkedIn, Instagram et TikTok). Dessinée en canvas, sans bibliothèque.
-// Deux mises en page : un indicateur (grande valeur dorée) ou un groupe (une colonne par pays).
+// Image exportée aux couleurs de Glaux, dessinée en canvas, sans bibliothèque.
+// Trois formats :
+// - portrait 1080 × 1350 (4:5) : LinkedIn, Instagram ;
+// - paysage 1200 × 675 (16:9) : LinkedIn, X ;
+// - story 1080 × 1920 (9:16) : TikTok, Reels, stories (contenu hors des zones couvertes
+//   par l'interface de l'application : ~250 px en haut, le bas réservé au texte secondaire).
+// Deux mises en page : un indicateur (grande valeur dorée) ou un groupe (une valeur par pays).
+// Chaque format est une table de positions (LAYOUTS) ; le dessin est commun.
 
 import { invoke } from "@tauri-apps/api/core";
 
 import { exportAgendaLine } from "./agenda";
-import { COLORS, drawChartOnCanvas, type ChartSeries } from "./chart";
-import { formatChange, formatDataDate, formatFullPeriod, formatNumber, formatValue, parsePeriod } from "./format";
+import { COLORS, drawChartOnCanvas, type CanvasChartStyle, type ChartSeries } from "./chart";
+import {
+  formatChange,
+  formatDataDate,
+  formatFullPeriod,
+  formatNumber,
+  formatValue,
+  parsePeriod,
+} from "./format";
 import { locale, t } from "./i18n";
 import type { Display, GroupDisplay, GroupMember } from "./indicators";
 import type { AgendaData, IndicatorView, Observation } from "./types";
 
-const WIDTH = 1080;
-const HEIGHT = 1350;
-const MARGIN = 80;
+export type ExportFormat = "portrait" | "landscape" | "story";
+export const EXPORT_FORMATS: ExportFormat[] = ["portrait", "landscape", "story"];
 
 const SERIF = `"Iowan Old Style", Georgia, "Times New Roman", serif`;
 const SANS = `-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+
+/** Texte placé à (x, y), ligne de base, taille de police en pixels. */
+type Spot = { x: number; y: number; size: number };
+/** Texte sur plusieurs lignes au plus `lines`, dans `maxWidth`. */
+type Block = Spot & { maxWidth: number; lineHeight: number; lines: number };
+
+type Layout = {
+  width: number;
+  height: number;
+  margin: number;
+  /** Marque « Glaux » (ligne de base), « Zone euro » et date, filet or. */
+  header: { y: number; brand: number; tag: number; rule: number };
+  /** Titre réduit jusqu'à `minSize` s'il dépasse `maxWidth`. */
+  title: Spot & { maxWidth: number; minSize: number };
+  hint: Block;
+  /** Indicateur : grande valeur, variation + date de la donnée, rendez-vous de l'agenda. */
+  value: Spot;
+  change: Block;
+  /** Position quand la variation tient sur une ligne ; descend d'une ligne sinon. */
+  agenda: Spot;
+  /**
+   * Groupe : « columns » = une colonne par pays (portrait, story) ;
+   * « rows » = une ligne par pays (paysage, colonne de gauche).
+   * `top` : ligne de base du nom du premier pays.
+   */
+  group: {
+    mode: "columns" | "rows";
+    top: number;
+    width: number;
+    name: number;
+    value: number;
+    unit: number;
+    change: number;
+    rowHeight: number;
+  };
+  /** Groupe : « Moyennes mensuelles · oct. 2026 ». */
+  month: Spot;
+  /** « SUR 5 ANS · depuis novembre 2021 » au-dessus de la courbe. */
+  period: Spot;
+  chart: { left: number; top: number; width: number; height: number; font: number; style: CanvasChartStyle };
+  explanation: Block;
+  footer: { rule: number; y: number; size: number; brand: number };
+};
+
+const LAYOUTS: Record<ExportFormat, Layout> = {
+  portrait: {
+    width: 1080,
+    height: 1350,
+    margin: 80,
+    header: { y: 112, brand: 46, tag: 28, rule: 150 },
+    title: { x: 80, y: 255, size: 70, maxWidth: 920, minSize: 52 },
+    hint: { x: 80, y: 305, size: 28, maxWidth: 920, lineHeight: 38, lines: 2 },
+    value: { x: 74, y: 520, size: 150 },
+    change: { x: 80, y: 580, size: 34, maxWidth: 920, lineHeight: 44, lines: 1 },
+    agenda: { x: 80, y: 630, size: 28 },
+    group: { mode: "columns", top: 420, width: 920, name: 32, value: 104, unit: 36, change: 28, rowHeight: 0 },
+    month: { x: 80, y: 630, size: 30 },
+    period: { x: 80, y: 692, size: 28 },
+    chart: { left: 80, top: 750, width: 920, height: 275, font: 26, style: { line: 5, dot: 9, labelGap: 44 } },
+    explanation: { x: 80, y: 1145, size: 30, maxWidth: 920, lineHeight: 42, lines: 3 },
+    footer: { rule: 1268, y: 1314, size: 24, brand: 28 },
+  },
+  landscape: {
+    width: 1200,
+    height: 675,
+    margin: 60,
+    header: { y: 68, brand: 34, tag: 21, rule: 94 },
+    // Colonne de gauche (x 60 → 480) : titre, valeur ; colonne de droite (x 520 → 1140) : courbe.
+    title: { x: 60, y: 160, size: 44, maxWidth: 420, minSize: 30 },
+    hint: { x: 60, y: 198, size: 19, maxWidth: 420, lineHeight: 26, lines: 3 },
+    value: { x: 56, y: 365, size: 96 },
+    change: { x: 60, y: 410, size: 22, maxWidth: 420, lineHeight: 30, lines: 2 },
+    agenda: { x: 60, y: 455, size: 20 },
+    group: { mode: "rows", top: 318, width: 420, name: 24, value: 44, unit: 20, change: 20, rowHeight: 56 },
+    month: { x: 60, y: 490, size: 19 },
+    period: { x: 520, y: 150, size: 19 },
+    chart: { left: 520, top: 178, width: 620, height: 282, font: 18, style: { line: 3.5, dot: 6, labelGap: 31 } },
+    explanation: { x: 60, y: 560, size: 21, maxWidth: 1080, lineHeight: 29, lines: 2 },
+    footer: { rule: 612, y: 648, size: 17, brand: 21 },
+  },
+  story: {
+    width: 1080,
+    height: 1920,
+    margin: 80,
+    header: { y: 250, brand: 52, tag: 30, rule: 292 },
+    title: { x: 80, y: 420, size: 80, maxWidth: 920, minSize: 56 },
+    hint: { x: 80, y: 480, size: 32, maxWidth: 920, lineHeight: 44, lines: 3 },
+    value: { x: 72, y: 770, size: 190 },
+    change: { x: 80, y: 840, size: 38, maxWidth: 920, lineHeight: 50, lines: 2 },
+    agenda: { x: 80, y: 905, size: 32 },
+    group: { mode: "columns", top: 660, width: 920, name: 36, value: 124, unit: 42, change: 30, rowHeight: 0 },
+    month: { x: 80, y: 925, size: 34 },
+    period: { x: 80, y: 1035, size: 32 },
+    chart: { left: 80, top: 1095, width: 920, height: 355, font: 30, style: { line: 6, dot: 10, labelGap: 51 } },
+    explanation: { x: 80, y: 1590, size: 34, maxWidth: 920, lineHeight: 48, lines: 3 },
+    footer: { rule: 1770, y: 1822, size: 28, brand: 32 },
+  },
+};
+
+/** Dimensions d'un format (pour l'infobulle du choix de format). */
+export function formatSize(format: ExportFormat): string {
+  const { width, height } = LAYOUTS[format];
+  return `${width} × ${height}`;
+}
 
 /** Découpe un texte en lignes qui tiennent dans `maxWidth` (au plus `maxLines`). */
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
@@ -40,92 +155,111 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, max
   return lines;
 }
 
-/** Canvas de l'image, fond compris. */
-function newCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+/** Écrit un bloc de texte sur plusieurs lignes (police déjà choisie). */
+function drawBlock(ctx: CanvasRenderingContext2D, text: string, block: Block): void {
+  wrap(ctx, text, block.maxWidth, block.lines).forEach((line, i) => {
+    ctx.fillText(line, block.x, block.y + i * block.lineHeight);
+  });
+}
+
+/** Canvas du format choisi, fond compris. */
+function newCanvas(layout: Layout): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement("canvas");
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
+  canvas.width = layout.width;
+  canvas.height = layout.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("dessin impossible");
   ctx.fillStyle = COLORS.nuit;
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.fillRect(0, 0, layout.width, layout.height);
+  ctx.textBaseline = "alphabetic";
   return { canvas, ctx };
 }
 
 /** En-tête : marque + date du jour, filet or. */
-function drawHeader(ctx: CanvasRenderingContext2D): void {
-  ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = COLORS.or;
-  ctx.font = `600 46px ${SERIF}`;
+function drawHeader(ctx: CanvasRenderingContext2D, layout: Layout): void {
+  const { margin, width, header } = layout;
   ctx.textAlign = "left";
-  ctx.fillText("Glaux", MARGIN, 112);
+  ctx.fillStyle = COLORS.or;
+  ctx.font = `600 ${header.brand}px ${SERIF}`;
+  ctx.fillText("Glaux", margin, header.y);
   const brandWidth = ctx.measureText("Glaux").width;
   ctx.fillStyle = COLORS.cremeDoux;
-  ctx.font = `28px ${SANS}`;
-  ctx.fillText(t().tagline, MARGIN + brandWidth + 18, 110);
+  ctx.font = `${header.tag}px ${SANS}`;
+  ctx.fillText(t().tagline, margin + brandWidth + header.tag * 0.65, header.y - 2);
   ctx.textAlign = "right";
   ctx.fillText(
     new Intl.DateTimeFormat(locale(), { day: "numeric", month: "long", year: "numeric" }).format(new Date()),
-    WIDTH - MARGIN,
-    110,
+    width - margin,
+    header.y - 2,
   );
   ctx.fillStyle = COLORS.or;
-  ctx.fillRect(MARGIN, 150, WIDTH - 2 * MARGIN, 2);
+  ctx.fillRect(margin, header.rule, width - 2 * margin, 2);
 }
 
-/** Titre et sous-titre (2 lignes au plus). */
-function drawTitle(ctx: CanvasRenderingContext2D, title: string, subtitle: string): void {
+/** Titre (réduit s'il est trop long) et sous-titre. */
+function drawTitle(ctx: CanvasRenderingContext2D, layout: Layout, title: string, subtitle: string): void {
+  const { title: spot, hint } = layout;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.creme;
-  ctx.font = `600 70px ${SERIF}`;
-  ctx.fillText(title, MARGIN, 255);
+  let size = spot.size;
+  ctx.font = `600 ${size}px ${SERIF}`;
+  while (size > spot.minSize && ctx.measureText(title).width > spot.maxWidth) {
+    size -= 2;
+    ctx.font = `600 ${size}px ${SERIF}`;
+  }
+  ctx.fillText(title, spot.x, spot.y);
   ctx.fillStyle = COLORS.cremeDoux;
-  ctx.font = `28px ${SANS}`;
-  wrap(ctx, subtitle, WIDTH - 2 * MARGIN, 2).forEach((line, i) => {
-    ctx.fillText(line, MARGIN, 305 + i * 38);
-  });
+  ctx.font = `${hint.size}px ${SANS}`;
+  drawBlock(ctx, subtitle, hint);
 }
 
 /** Période de la courbe (« SUR 5 ANS · depuis novembre 2021 ») puis la courbe. */
-function drawChartBlock(ctx: CanvasRenderingContext2D, series: ChartSeries[], display: Display, months: number): void {
+function drawChartBlock(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  series: ChartSeries[],
+  display: Display,
+  months: number,
+): void {
+  const { period, chart } = layout;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.cremeDoux;
-  ctx.font = `600 28px ${SANS}`;
+  ctx.font = `600 ${period.size}px ${SANS}`;
   const firstDate = series
     .flatMap((s) => s.points.slice(0, 1).map((p) => p.date))
     .sort()[0];
   const first = firstDate ? parsePeriod(firstDate) : null;
   const since = first ? new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(first) : "";
-  const period = t().overYears(Math.max(1, Math.round(months / 12)));
-  ctx.fillText(`${period.toUpperCase()}${since ? `  ·  ${t().sinceMonth(since)}` : ""}`, MARGIN, 692);
+  const label = t().overYears(Math.max(1, Math.round(months / 12)));
+  ctx.fillText(`${label.toUpperCase()}${since ? `  ·  ${t().sinceMonth(since)}` : ""}`, period.x, period.y);
   drawChartOnCanvas(
     ctx,
     series,
     display,
     months,
-    { left: MARGIN, top: 750, width: WIDTH - 2 * MARGIN, height: 275 },
-    `26px ${SANS}`,
+    { left: chart.left, top: chart.top, width: chart.width, height: chart.height },
+    `${chart.font}px ${SANS}`,
+    chart.style,
   );
 }
 
-/** Explication (3 lignes au plus) puis pied de page : source et marque. */
-function drawFooter(ctx: CanvasRenderingContext2D, explanation: string): void {
+/** Explication puis pied de page : source et marque. */
+function drawFooter(ctx: CanvasRenderingContext2D, layout: Layout, explanation: string): void {
+  const { margin, width, footer, explanation: block } = layout;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.creme;
-  ctx.font = `30px ${SANS}`;
-  wrap(ctx, explanation, WIDTH - 2 * MARGIN, 3).forEach((line, i) => {
-    ctx.fillText(line, MARGIN, 1145 + i * 42);
-  });
+  ctx.font = `${block.size}px ${SANS}`;
+  drawBlock(ctx, explanation, block);
 
   ctx.fillStyle = COLORS.ligne;
-  ctx.fillRect(MARGIN, HEIGHT - 82, WIDTH - 2 * MARGIN, 2);
+  ctx.fillRect(margin, footer.rule, width - 2 * margin, 2);
   ctx.fillStyle = COLORS.cremeDoux;
-  ctx.font = `24px ${SANS}`;
-  ctx.fillText(t().source, MARGIN, HEIGHT - 36);
+  ctx.font = `${footer.size}px ${SANS}`;
+  ctx.fillText(t().source, margin, footer.y);
   ctx.textAlign = "right";
   ctx.fillStyle = COLORS.or;
-  ctx.font = `600 28px ${SERIF}`;
-  ctx.fillText("Glaux", WIDTH - MARGIN, HEIGHT - 36);
+  ctx.font = `600 ${footer.brand}px ${SERIF}`;
+  ctx.fillText("Glaux", width - margin, footer.y);
 }
 
 async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
@@ -140,119 +274,159 @@ export async function renderExportImage(
   display: Display,
   points: Observation[],
   months: number,
-  agenda?: AgendaData,
+  agenda: AgendaData | undefined,
+  format: ExportFormat,
 ): Promise<Uint8Array> {
-  const { canvas, ctx } = newCanvas();
-  drawHeader(ctx);
-  drawTitle(ctx, display.label, display.hint);
+  const layout = LAYOUTS[format];
+  const { canvas, ctx } = newCanvas(layout);
+  drawHeader(ctx, layout);
+  drawTitle(ctx, layout, display.label, display.hint);
 
-  // Valeur, variation et date de la donnée.
+  // Valeur, puis variation et date de la donnée (sur deux lignes si besoin).
   const latest = indicator.latest;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.or;
-  ctx.font = `700 150px ${SANS}`;
-  ctx.fillText(latest ? formatValue(latest.value, display) : "—", MARGIN - 6, 520);
+  ctx.font = `700 ${layout.value.size}px ${SANS}`;
+  ctx.fillText(latest ? formatValue(latest.value, display) : "—", layout.value.x, layout.value.y);
   ctx.fillStyle = COLORS.creme;
-  ctx.font = `34px ${SANS}`;
-  const dateText = formatDataDate(indicator, display);
-  const change = formatChange(indicator, display);
-  ctx.fillText([change, dateText].filter(Boolean).join("  ·  "), MARGIN, 580);
+  ctx.font = `${layout.change.size}px ${SANS}`;
+  const details = [formatChange(indicator, display), formatDataDate(indicator, display)].filter(Boolean);
+  const split = layout.change.lines > 1 && ctx.measureText(details.join("  ·  ")).width > layout.change.maxWidth;
+  const lines = split ? details : [details.join("  ·  ")];
+  lines.forEach((line, i) => ctx.fillText(line, layout.change.x, layout.change.y + i * layout.change.lineHeight));
 
-  // Taux de dépôt et inflation : prochain rendez-vous de l'agenda, en or.
+  // Taux de dépôt et inflation : prochain rendez-vous de l'agenda, en or, sous la variation.
   const agendaLine = exportAgendaLine(indicator.id, agenda);
   if (agendaLine) {
     ctx.fillStyle = COLORS.or;
-    ctx.font = `600 28px ${SANS}`;
-    ctx.fillText(agendaLine, MARGIN, 630);
+    ctx.font = `600 ${layout.agenda.size}px ${SANS}`;
+    const shift = (lines.length - 1) * layout.change.lineHeight;
+    ctx.fillText(agendaLine, layout.agenda.x, layout.agenda.y + shift);
   }
 
-  drawChartBlock(ctx, [{ points, color: COLORS.or }], display, months);
-  drawFooter(ctx, display.explanation);
+  drawChartBlock(ctx, layout, [{ points, color: COLORS.or }], display, months);
+  drawFooter(ctx, layout, display.explanation);
   return toPng(canvas);
 }
 
 /** Un membre de groupe prêt à dessiner : sa couleur, ses données, sa présentation. */
 export type ExportMember = { member: GroupMember; indicator: IndicatorView; display: Display };
 
+/** Variation sur 1 mois en points de base, courte : « +51 pb ». */
+function shortChange(indicator: IndicatorView): string {
+  if (!indicator.latest || !indicator.reference) return "";
+  const change = (indicator.latest.value - indicator.reference.value) * 100;
+  return Math.abs(change) < 0.5 ? "=" : `${formatNumber(change, 0, true)} ${t().bpUnit}`;
+}
+
+/** Une colonne par pays : pastille + nom, grande valeur, variation (portrait, story). */
+function drawGroupColumns(ctx: CanvasRenderingContext2D, layout: Layout, members: ExportMember[]): void {
+  const { group, margin } = layout;
+  const columnWidth = group.width / Math.max(1, members.length);
+  members.forEach(({ member, indicator, display }, k) => {
+    const left = margin + k * columnWidth;
+    const dot = group.name * 0.34;
+    ctx.fillStyle = member.color;
+    ctx.beginPath();
+    ctx.arc(left + dot, group.top - group.name * 0.34, dot, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLORS.creme;
+    ctx.font = `600 ${group.name}px ${SANS}`;
+    ctx.fillText(display.label, left + dot * 2 + group.name * 0.4, group.top);
+
+    const latest = indicator.latest;
+    const value = latest ? formatNumber(latest.value * 100, 0) : "—";
+    const valueY = group.top + group.value * 1.04;
+    ctx.fillStyle = member.color;
+    ctx.font = `700 ${group.value}px ${SANS}`;
+    ctx.fillText(value, left - group.value * 0.04, valueY);
+    if (latest) {
+      const valueWidth = ctx.measureText(value).width;
+      ctx.font = `600 ${group.unit}px ${SANS}`;
+      ctx.fillText(t().bpUnit, left + valueWidth + group.unit * 0.25, valueY);
+    }
+
+    ctx.fillStyle = COLORS.cremeDoux;
+    ctx.font = `${group.change}px ${SANS}`;
+    ctx.fillText(formatChange(indicator, display), left, valueY + group.change * 1.7);
+  });
+}
+
+/** Une ligne par pays : pastille + nom, valeur, variation courte (paysage). */
+function drawGroupRows(ctx: CanvasRenderingContext2D, layout: Layout, members: ExportMember[]): void {
+  const { group, margin } = layout;
+  members.forEach(({ member, indicator, display }, k) => {
+    const y = group.top + k * group.rowHeight;
+    const dot = group.name * 0.3;
+    ctx.fillStyle = member.color;
+    ctx.beginPath();
+    ctx.arc(margin + dot, y - group.name * 0.34, dot, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLORS.creme;
+    ctx.font = `600 ${group.name}px ${SANS}`;
+    ctx.fillText(display.label, margin + dot * 2 + 10, y);
+
+    // Valeur alignée sur une colonne commune, puis l'unité et la variation.
+    const valueX = margin + group.width * 0.36;
+    const latest = indicator.latest;
+    const value = latest ? formatNumber(latest.value * 100, 0) : "—";
+    ctx.fillStyle = member.color;
+    ctx.font = `700 ${group.value}px ${SANS}`;
+    ctx.fillText(value, valueX, y + 2);
+    const valueWidth = ctx.measureText(value).width;
+    if (latest) {
+      ctx.font = `600 ${group.unit}px ${SANS}`;
+      ctx.fillText(t().bpUnit, valueX + valueWidth + 6, y + 2);
+    }
+    ctx.fillStyle = COLORS.cremeDoux;
+    ctx.font = `${group.change}px ${SANS}`;
+    ctx.fillText(shortChange(indicator), margin + group.width * 0.72, y);
+  });
+}
+
 /**
- * Image d'un groupe (écarts de taux) : une colonne par pays (nom, valeur, variation)
- * dans la couleur de sa courbe, puis les courbes superposées. Renvoie le PNG.
+ * Image d'un groupe (écarts de taux) : une valeur par pays dans la couleur de sa courbe,
+ * puis les courbes superposées. Renvoie le PNG.
  */
 export async function renderGroupExportImage(
   group: GroupDisplay,
   members: ExportMember[],
   series: ChartSeries[],
   months: number,
+  format: ExportFormat,
 ): Promise<Uint8Array> {
-  const { canvas, ctx } = newCanvas();
-  drawHeader(ctx);
-  drawTitle(ctx, group.label, group.hint);
+  const layout = LAYOUTS[format];
+  const { canvas, ctx } = newCanvas(layout);
+  drawHeader(ctx, layout);
+  drawTitle(ctx, layout, group.label, group.hint);
 
-  const columnWidth = (WIDTH - 2 * MARGIN) / Math.max(1, members.length);
-  members.forEach(({ member, indicator, display }, k) => {
-    const left = MARGIN + k * columnWidth;
-    // Pastille de couleur + nom du pays.
-    ctx.fillStyle = member.color;
-    ctx.beginPath();
-    ctx.arc(left + 11, 409, 11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.textAlign = "left";
-    ctx.fillStyle = COLORS.creme;
-    ctx.font = `600 32px ${SANS}`;
-    ctx.fillText(display.label, left + 34, 420);
-
-    // Valeur en points de base : grand nombre, unité plus petite.
-    const latest = indicator.latest;
-    const value = latest ? formatNumber(latest.value * 100, 0) : "—";
-    ctx.fillStyle = member.color;
-    ctx.font = `700 104px ${SANS}`;
-    ctx.fillText(value, left - 4, 528);
-    if (latest) {
-      const valueWidth = ctx.measureText(value).width;
-      ctx.font = `600 36px ${SANS}`;
-      ctx.fillText(t().bpUnit, left + valueWidth + 8, 528);
-    }
-
-    // Variation sur 1 mois.
-    ctx.fillStyle = COLORS.cremeDoux;
-    ctx.font = `28px ${SANS}`;
-    ctx.fillText(formatChange(indicator, display), left, 576);
-  });
+  if (layout.group.mode === "rows") drawGroupRows(ctx, layout, members);
+  else drawGroupColumns(ctx, layout, members);
 
   // Mois des données (les trois séries sont publiées ensemble).
   const dated = members.find((m) => m.indicator.latest);
-  if (dated) {
+  if (dated?.indicator.latest) {
+    ctx.textAlign = "left";
     ctx.fillStyle = COLORS.creme;
-    ctx.font = `30px ${SANS}`;
-    const month = dated.indicator.latest ? formatFullPeriod(dated.indicator.latest.date, true) : "";
-    ctx.fillText(`${t().monthlyAverages}  ·  ${month}`, MARGIN, 630);
+    ctx.font = `${layout.month.size}px ${SANS}`;
+    const month = formatFullPeriod(dated.indicator.latest.date, true);
+    ctx.fillText(`${t().monthlyAverages}  ·  ${month}`, layout.month.x, layout.month.y);
   }
 
-  drawChartBlock(ctx, series, (dated ?? members[0]).display, months);
-  drawFooter(ctx, group.explanation);
+  const display = (dated ?? members[0])?.display;
+  if (display) drawChartBlock(ctx, layout, series, display, months);
+  drawFooter(ctx, layout, group.explanation);
   return toPng(canvas);
 }
 
-/** Dessine l'image et l'enregistre (Images › Glaux). Renvoie le chemin du fichier. */
-export async function exportIndicator(
-  indicator: IndicatorView,
-  display: Display,
-  points: Observation[],
-  months: number,
-  agenda?: AgendaData,
-): Promise<string> {
-  const png = await renderExportImage(indicator, display, points, months, agenda);
-  return invoke<string>("save_png", png, { headers: { "x-indicator": indicator.id } });
+/** Enregistre l'image (Images › Glaux) ; `id` : indicateur ou groupe. Renvoie le chemin du fichier. */
+export function savePng(png: Uint8Array, id: string, format: ExportFormat): Promise<string> {
+  return invoke<string>("save_png", png, { headers: { "x-indicator": id, "x-format": format } });
 }
 
-/** Même chose pour un groupe (identifiant du groupe dans le nom du fichier). */
-export async function exportGroup(
-  groupId: string,
-  group: GroupDisplay,
-  members: ExportMember[],
-  series: ChartSeries[],
-  months: number,
-): Promise<string> {
-  const png = await renderGroupExportImage(group, members, series, months);
-  return invoke<string>("save_png", png, { headers: { "x-indicator": groupId } });
+/** Copie l'image dans le presse-papiers, prête à coller dans un post. */
+export function copyPng(png: Uint8Array): Promise<void> {
+  return invoke<void>("copy_png", png);
 }

@@ -362,6 +362,16 @@ export function renderDetailChart(
 
 // ---------- Courbe de l'image exportée (canvas) ----------
 
+/** Épaisseurs du dessin exporté, selon la taille de l'image. */
+export type CanvasChartStyle = {
+  /** Épaisseur du trait (une seule courbe ; un peu moins quand il y en a plusieurs). */
+  line: number;
+  /** Rayon du point final. */
+  dot: number;
+  /** Distance entre le bas de la courbe et les étiquettes de temps. */
+  labelGap: number;
+};
+
 /**
  * Dessine la courbe (une ou plusieurs) dans un canvas, pour l'image exportée.
  * Tailles en pixels de l'image.
@@ -373,6 +383,7 @@ export function drawChartOnCanvas(
   months: number,
   frame: Box,
   font: string,
+  style: CanvasChartStyle = { line: 5, dot: 9, labelGap: 44 },
 ): void {
   const { dates, rows } = alignSeries(series);
   const all = rows.flat().filter((v): v is number => v !== null);
@@ -413,7 +424,7 @@ export function drawChartOnCanvas(
   // Étiquettes de temps.
   ctx.textAlign = "center";
   for (const { index, text } of timeLabels(dates, months)) {
-    ctx.fillText(text, x(index), bottom + 44);
+    ctx.fillText(text, x(index), bottom + style.labelGap);
   }
 
   const single = series.length === 1;
@@ -437,7 +448,7 @@ export function drawChartOnCanvas(
   ctx.lineCap = "round";
   rows.forEach((values, k) => {
     ctx.strokeStyle = series[k].color;
-    ctx.lineWidth = single ? 5 : 4;
+    ctx.lineWidth = single ? style.line : style.line * 0.8;
     ctx.stroke(new Path2D(linePath(values, x, y, !!display.step)));
   });
   rows.forEach((values, k) => {
@@ -446,7 +457,7 @@ export function drawChartOnCanvas(
     if (value === null || value === undefined) return;
     ctx.fillStyle = series[k].color;
     ctx.beginPath();
-    ctx.arc(x(end), y(value), single ? 9 : 7, 0, Math.PI * 2);
+    ctx.arc(x(end), y(value), single ? style.dot : style.dot * 0.78, 0, Math.PI * 2);
     ctx.fill();
   });
 

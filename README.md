@@ -12,7 +12,7 @@ Data comes straight from the European Central Bank's official API. No account, n
 - 8 indicators: latest value, change over 1 month and a 1-year mini chart
 - 10-year spreads against Germany for France, Italy and Spain, on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
-- PNG export (1080 × 1350), ready for LinkedIn, Instagram or TikTok
+- Image export in three formats: portrait 1080 × 1350 (LinkedIn, Instagram), landscape 1200 × 675 (LinkedIn, X) and story 1080 × 1920 (TikTok, Reels), saved as PNG or copied to paste straight into a post
 - Calendar: next ECB decision and next flash inflation release, with a reminder on the day
 - Notifications when the ECB changes rates or a new inflation figure comes out
 - Works offline with the last downloaded data

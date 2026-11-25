@@ -37,6 +37,15 @@ Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APP
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
 Préférences (alertes activées, rappels déjà envoyés, langue) : `prefs.json`, dans le même dossier que le cache.
 
+## Image exportée
+
+Vue détail : choix du format (retenu d'une fois sur l'autre), « Copier » (⌘C) et « Enregistrer » (⌘E).
+- Portrait 1080 × 1350 (LinkedIn, Instagram), paysage 1200 × 675 (LinkedIn, X), story 1080 × 1920 (TikTok, Reels).
+  La story garde l'essentiel hors des zones couvertes par l'interface des applications (haut et bas de l'écran).
+- Chaque format est une table de positions dans `src/export.ts` (`LAYOUTS`) ; le dessin est commun.
+- Enregistrement : `Images/Glaux/Glaux_{indicateur}_{format}_{date}.png` (nom construit côté Rust à partir de
+  valeurs connues). Copie : module presse-papiers de Tauri (`copy_png` dans `main.rs`).
+
 ## Langue
 
 Français ou anglais. Par défaut : la langue du système (français si le Mac/PC est en français, anglais sinon).
@@ -113,7 +122,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `index.html`, `src/styles.css` | Structure et style du panneau (liste + vue détail) |
 | `src/main.ts` | Interface : liste, vue détail, boutons, raccourcis |
 | `src/chart.ts` | Courbes sans bibliothèque : mini-courbes, courbe de la vue détail, courbe de l'image |
-| `src/export.ts` | Image PNG 1080 × 1350 enregistrée dans Images › Glaux |
+| `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée |
 | `src/agenda.ts` | Bandeau d'agenda : compte à rebours (les dates viennent de Rust) |
 | `src/indicators.ts` | Nom, précision et textes d'explication de chaque indicateur (FR / EN) |
 | `src/i18n.ts` | Tous les textes de l'interface, en français et en anglais |

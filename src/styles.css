@@ -487,6 +487,38 @@ body {
   color: var(--or);
 }
 
+/* Vue détail : format de l'image, « Copier », « Enregistrer ». */
+.detail__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Liste déroulante discrète, au style des liens (flèche dessinée en CSS). */
+.format-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--creme-doux);
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%23b9b4a8' stroke-width='1.2'/%3E%3C/svg%3E")
+    right 1px center / 8px 5px no-repeat;
+  border: none;
+  padding: 2px 12px 2px 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.format-select:hover,
+.format-select:focus-visible {
+  color: var(--or);
+  outline: none;
+}
+
+.format-select option {
+  color: initial;
+}
+
 /* Choix de période « 1 an / 5 ans ». */
 .segmented {
   display: inline-flex;

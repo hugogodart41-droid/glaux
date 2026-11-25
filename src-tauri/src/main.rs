@@ -27,6 +27,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, State, WebviewWindow,
     WindowEvent,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 // Module de notifications de Tauri : Windows et Linux seulement (Mac : macos_notify).
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
@@ -204,27 +205,44 @@ fn get_history(
     store.history(&id, months, chrono::Local::now().date_naive())
 }
 
-/// Enregistre l'image exportée (PNG) dans Images/Glaux, puis la montre dans le Finder
-/// (ou l'Explorateur sous Windows). Renvoie le chemin du fichier.
-///
-/// L'image arrive en binaire brut (pas de JSON) ; l'indicateur dans l'en-tête
-/// « x-indicator ». Le nom du fichier est construit ici, jamais par l'interface.
-#[tauri::command]
-fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+/// Image PNG reçue de l'interface en binaire brut (pas de JSON).
+/// Vérification minimale : un PNG commence toujours par ces 8 octets.
+fn png_body<'a>(request: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("image manquante".into());
     };
-    // Vérification minimale : un PNG commence toujours par ces 8 octets.
     if !bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return Err("le fichier reçu n'est pas une image PNG".into());
     }
+    Ok(bytes)
+}
 
-    let id = request
+/// Valeur d'un en-tête de la requête (vide si absent).
+fn header<'a>(request: &'a tauri::ipc::Request<'_>, name: &str) -> &'a str {
+    request
         .headers()
-        .get("x-indicator")
+        .get(name)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-    let name = store::export_name(id).ok_or_else(|| "indicateur inconnu".to_string())?;
+        .unwrap_or_default()
+}
+
+/// Formats d'image connus (nom du fichier) : portrait 4:5, paysage 16:9, story 9:16.
+const EXPORT_FORMATS: [&str; 3] = ["portrait", "landscape", "story"];
+
+/// Enregistre l'image exportée (PNG) dans Images/Glaux, puis la montre dans le Finder
+/// (ou l'Explorateur sous Windows). Renvoie le chemin du fichier.
+///
+/// En-têtes : « x-indicator » (indicateur ou groupe) et « x-format ».
+/// Le nom du fichier est construit ici à partir de valeurs connues, jamais du texte reçu.
+#[tauri::command]
+fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let bytes = png_body(&request)?;
+    let name = store::export_name(header(&request, "x-indicator"))
+        .ok_or_else(|| "indicateur inconnu".to_string())?;
+    let format = EXPORT_FORMATS
+        .into_iter()
+        .find(|f| *f == header(&request, "x-format"))
+        .unwrap_or("portrait");
 
     let dir = app
         .path()
@@ -234,11 +252,22 @@ fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, 
     std::fs::create_dir_all(&dir).map_err(|e| format!("création du dossier impossible : {e}"))?;
 
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
-    let path: PathBuf = dir.join(format!("Glaux_{name}_{stamp}.png"));
+    let path: PathBuf = dir.join(format!("Glaux_{name}_{format}_{stamp}.png"));
     std::fs::write(&path, bytes).map_err(|e| format!("enregistrement impossible : {e}"))?;
 
     reveal_in_file_manager(&path);
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Copie l'image exportée dans le presse-papiers, prête à coller dans un post.
+#[tauri::command]
+fn copy_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let bytes = png_body(&request)?;
+    let image =
+        tauri::image::Image::from_bytes(bytes).map_err(|e| format!("image illisible : {e}"))?;
+    app.clipboard()
+        .write_image(&image)
+        .map_err(|e| format!("copie impossible : {e}"))
 }
 
 /// Ouvre le dossier du fichier et le sélectionne (sans attendre ; échec silencieux).
@@ -423,6 +452,8 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_notification::init());
 
     builder
+        // Presse-papiers (copie de l'image exportée).
+        .plugin(tauri_plugin_clipboard_manager::init())
         // Mises à jour automatiques (src/updates.rs ; adresse et clé publique : tauri.conf.json).
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(UpdateState::default())
@@ -432,6 +463,7 @@ fn main() {
             get_history,
             refresh_now,
             save_png,
+            copy_png,
             set_notifications,
             set_language,
             install_update,

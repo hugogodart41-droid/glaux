@@ -8,7 +8,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { formatCountdown, formatEventDate, upcomingEvents } from "./agenda";
 import { COLORS, renderDetailChart, renderSparkline, type ChartSeries } from "./chart";
-import { exportGroup, exportIndicator } from "./export";
+import {
+  EXPORT_FORMATS,
+  copyPng,
+  formatSize,
+  renderExportImage,
+  renderGroupExportImage,
+  savePng,
+  type ExportFormat,
+} from "./export";
 import {
   IS_MAC,
   formatChange,
@@ -35,6 +43,26 @@ let detailMonths = 60;
 const historyCache = new Map<string, Observation[]>();
 /** Numéro de la dernière demande d'historique : ignore les réponses arrivées en retard. */
 let detailRequest = 0;
+/** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
+let exportFormat: ExportFormat = loadExportFormat();
+
+function loadExportFormat(): ExportFormat {
+  try {
+    const saved = localStorage.getItem("glaux.exportFormat");
+    return EXPORT_FORMATS.find((f) => f === saved) ?? "portrait";
+  } catch {
+    return "portrait";
+  }
+}
+
+function saveExportFormat(format: ExportFormat): void {
+  exportFormat = format;
+  try {
+    localStorage.setItem("glaux.exportFormat", format);
+  } catch {
+    // stockage indisponible : le choix vaut pour cette session seulement
+  }
+}
 
 const $ = (id: string) => document.getElementById(id);
 
@@ -397,40 +425,51 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
   chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover));
 }
 
-async function exportCurrent(): Promise<void> {
-  const button = $("export");
-  const id = detailId;
-  if (!button || !id || button.dataset.busy) return;
+/** Image de la vue détail ouverte, au format choisi. */
+async function buildImage(id: string): Promise<Uint8Array> {
   const group = groupFor(id);
+  if (group) {
+    const members = groupMembers(group, dashboard?.indicators ?? []);
+    const series = await loadGroupSeries(group, detailMonths);
+    return renderGroupExportImage(group, members, series, detailMonths, exportFormat);
+  }
   const indicator = dashboard?.indicators.find((i) => i.id === id);
   const display = displayFor(id);
-  if (!group && (!indicator || !display)) return;
+  if (!indicator || !display) throw new Error("indicateur inconnu");
+  const points = await loadHistory(id, detailMonths);
+  return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat);
+}
 
+/**
+ * « Enregistrer » (Images › Glaux, affichée dans le Finder) ou « Copier » (presse-papiers).
+ * Le bouton affiche le résultat 2,5 s, puis reprend son texte.
+ */
+async function exportCurrent(action: "save" | "copy"): Promise<void> {
+  const button = $(action === "save" ? "export" : "copy");
+  const id = detailId;
+  if (!button || !id || button.dataset.busy) return;
+
+  const strings = t();
   button.dataset.busy = "1";
-  button.textContent = t().exporting;
+  button.textContent = action === "save" ? strings.exporting : strings.copying;
   try {
-    let path: string;
-    if (group) {
-      const members = groupMembers(group, dashboard?.indicators ?? []);
-      const series = await loadGroupSeries(group, detailMonths);
-      path = await exportGroup(id, group, members, series, detailMonths);
-    } else if (indicator && display) {
-      const points = await loadHistory(id, detailMonths);
-      path = await exportIndicator(indicator, display, points, detailMonths, dashboard?.agenda);
+    const png = await buildImage(id);
+    if (action === "save") {
+      const path = await savePng(png, id, exportFormat);
+      button.setAttribute("data-tooltip", path);
     } else {
-      throw new Error("indicateur inconnu");
+      await copyPng(png);
     }
-    button.textContent = t().exported;
-    button.setAttribute("data-tooltip", path);
+    button.textContent = action === "save" ? strings.exported : strings.copied;
   } catch (err) {
     console.error("Export impossible :", err);
-    button.textContent = t().exportFailed;
+    button.textContent = action === "save" ? strings.exportFailed : strings.copyFailed;
     button.setAttribute("data-tooltip", String(err));
   }
   window.setTimeout(() => {
     delete button.dataset.busy;
-    applyExportButton(); // texte d'origine, dans la langue du moment
-  }, 3000);
+    applyExportButtons(); // texte d'origine, dans la langue du moment
+  }, 2500);
 }
 
 // ---------- Alertes (notifications) ----------
@@ -497,11 +536,29 @@ function keys(key: string): string {
   return `${IS_MAC ? "⌘" : "Ctrl+"}${key}`;
 }
 
-function applyExportButton(): void {
-  const button = $("export");
-  if (!button || button.dataset.busy) return; // export en cours : son texte sera remis à la fin
-  button.textContent = t().exportImage;
-  button.setAttribute("data-tooltip", t().exportHint(keys("E")));
+/** Boutons de la vue détail : format, « Copier », « Enregistrer » (dans la langue du moment). */
+function applyExportButtons(): void {
+  const strings = t();
+  const save = $("export");
+  if (save && !save.dataset.busy) {
+    save.textContent = strings.exportImage;
+    save.setAttribute("data-tooltip", strings.exportHint(keys("E")));
+  }
+  const copy = $("copy");
+  if (copy && !copy.dataset.busy) {
+    copy.textContent = strings.copyImage;
+    copy.setAttribute("data-tooltip", strings.copyHint(keys("C")));
+  }
+  const select = $("export-format") as HTMLSelectElement | null;
+  if (select) {
+    for (const option of Array.from(select.options)) {
+      const format = option.value as ExportFormat;
+      option.textContent = strings.formatNames[format];
+    }
+    select.value = exportFormat;
+    select.setAttribute("aria-label", strings.formatAria);
+    select.setAttribute("data-tooltip", strings.formatHint(formatSize(exportFormat), strings.formatPlatforms[exportFormat]));
+  }
 }
 
 /** Textes fixes du panneau (index.html), remis à chaque changement de langue. */
@@ -519,7 +576,7 @@ function applyStaticTexts(): void {
   set('[data-months="60"]', strings.fiveYears);
   set("#quit", strings.quit, strings.quitHint(keys("Q")));
   set("#language", strings.switchLanguage, strings.switchLanguageHint);
-  applyExportButton();
+  applyExportButtons();
 
   const refresh = $("refresh");
   refresh?.setAttribute("aria-label", strings.refresh);
@@ -561,7 +618,14 @@ function setupButtons(): void {
   $("alerts")?.addEventListener("click", toggleAlerts);
 
   $("back")?.addEventListener("click", closeDetail);
-  $("export")?.addEventListener("click", () => void exportCurrent());
+  $("export")?.addEventListener("click", () => void exportCurrent("save"));
+  $("copy")?.addEventListener("click", () => void exportCurrent("copy"));
+  $("export-format")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    const format = EXPORT_FORMATS.find((f) => f === value);
+    if (format) saveExportFormat(format);
+    applyExportButtons();
+  });
 
   document.querySelectorAll<HTMLButtonElement>("[data-months]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -571,7 +635,8 @@ function setupButtons(): void {
   });
 }
 
-// Échap : retour à la liste, ou ferme le panneau. ⌘Q quitte, ⌘R actualise, ⌘E exporte.
+// Échap : retour à la liste, ou ferme le panneau. ⌘Q quitte, ⌘R actualise,
+// en vue détail : ⌘E enregistre l'image, ⌘C la copie (sauf si du texte est sélectionné).
 function listenForShortcuts(): void {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -595,7 +660,10 @@ function listenForShortcuts(): void {
       refreshNow();
     } else if (key === "e" && detailId) {
       event.preventDefault();
-      void exportCurrent();
+      void exportCurrent("save");
+    } else if (key === "c" && detailId && !window.getSelection()?.toString()) {
+      event.preventDefault();
+      void exportCurrent("copy");
     }
   });
 }

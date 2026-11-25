@@ -33,7 +33,16 @@
       <section class="detail" id="detail" hidden>
         <div class="detail__bar">
           <button type="button" class="link-button" id="back">‹ Indicateurs</button>
-          <button type="button" class="link-button link-button--gold" id="export">Exporter l'image</button>
+          <span class="detail__actions">
+            <!-- Format de l'image exportée (retenu d'une fois sur l'autre). -->
+            <select class="format-select" id="export-format">
+              <option value="portrait">Portrait 4:5</option>
+              <option value="landscape">Paysage 16:9</option>
+              <option value="story">Story 9:16</option>
+            </select>
+            <button type="button" class="link-button" id="copy">Copier</button>
+            <button type="button" class="link-button link-button--gold" id="export">Enregistrer</button>
+          </span>
         </div>
         <div class="detail__head">
           <div class="detail__left">

@@ -24,6 +24,8 @@ csv = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Langue du système (français ou anglais par défaut)
 sys-locale = "0.3"
+# Copie de l'image exportée dans le presse-papiers (bouton « Copier »)
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
 
 # Notifications (changement de taux BCE, nouvelle inflation, rappels du jour J) :
