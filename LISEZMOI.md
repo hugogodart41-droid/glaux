@@ -46,6 +46,15 @@ Vue détail : choix du format (retenu d'une fois sur l'autre), « Copier » (⌘
 - Enregistrement : `Images/Glaux/Glaux_{indicateur}_{format}_{date}.png` (nom construit côté Rust à partir de
   valeurs connues). Copie : module presse-papiers de Tauri (`copy_png` dans `main.rs`).
 
+## Export Excel
+
+Icône « tableau » dans l'en-tête (à côté de ↻) : toutes les séries dans `Documents/Glaux/Glaux_donnees_{date}.xlsx`,
+construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_xlsxwriter`), sans réseau.
+- « Quotidien » : taux de dépôt (valeur en vigueur reportée sur chaque date), €STR, taux 10 ans, EUR/USD, pente (pb).
+- « Mensuel » : inflation, chômage, taux réel, taux 10 ans DE/FR/IT/ES, écarts avec l'Allemagne (pb).
+- « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
+Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
+
 ## Langue
 
 Français ou anglais. Par défaut : la langue du système (français si le Mac/PC est en français, anglais sinon).
@@ -109,6 +118,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/src/macos_notify.rs` | Notifications Mac (UNUserNotificationCenter, repli osascript en mode dev) |
 | `src-tauri/src/alerts.rs` | Textes des notifications : changement de taux BCE, nouvelle inflation |
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
+| `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, sources) |
 | `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification quotidienne, installation au clic |
 | `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation) et indicateurs calculés à la demande |
 | `src-tauri/tauri.conf.json` | Fenêtre, identifiant de l'app, icônes, sécurité, mises à jour |

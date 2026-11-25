@@ -10,6 +10,7 @@ mod agenda;
 mod alerts;
 mod data;
 mod ecb;
+mod excel;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod macos_notify;
@@ -259,6 +260,45 @@ fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, 
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Exporte toutes les séries dans un fichier Excel (Documents/Glaux), puis le montre dans le
+/// Finder (ou l'Explorateur). Construit à partir du cache, sans réseau. Renvoie le chemin.
+#[tauri::command]
+async fn export_excel(app: AppHandle) -> Result<String, String> {
+    // Hors du fil principal : le panneau reste réactif pendant la compression du fichier.
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = app.state::<Store>();
+        let lang = store.lang();
+        let downloaded = store
+            .last_success()
+            .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+            .map(|t| {
+                t.with_timezone(&chrono::Local)
+                    .format("%d/%m/%Y %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "—".into());
+        let version = app.package_info().version.to_string();
+        let bytes = excel::build_workbook(&store.export_series(), lang, &downloaded, &version)?;
+
+        let dir = app
+            .path()
+            .document_dir()
+            .map_err(|e| format!("dossier Documents introuvable : {e}"))?
+            .join("Glaux");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("création du dossier impossible : {e}"))?;
+        let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
+        let name = lang.pick("donnees", "data");
+        let path: PathBuf = dir.join(format!("Glaux_{name}_{stamp}.xlsx"));
+        std::fs::write(&path, bytes).map_err(|e| format!("enregistrement impossible : {e}"))?;
+
+        reveal_in_file_manager(&path);
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| format!("export interrompu : {e}"))?
+}
+
 /// Copie l'image exportée dans le presse-papiers, prête à coller dans un post.
 #[tauri::command]
 fn copy_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
@@ -464,6 +504,7 @@ fn main() {
             refresh_now,
             save_png,
             copy_png,
+            export_excel,
             set_notifications,
             set_language,
             install_update,

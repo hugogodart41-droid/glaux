@@ -109,6 +109,16 @@ pub fn export_name(id: &str) -> Option<&'static str> {
         .find(|known| *known == id)
 }
 
+/// Une série pour l'export Excel (src/excel.rs) : BCE (avec sa clé) ou calculée.
+pub struct ExportSeries {
+    pub id: &'static str,
+    pub observations: Vec<Observation>,
+    /// Taux en escalier : valeur en vigueur reportée sur chaque date.
+    pub step: bool,
+    /// Clé BCE complète (None pour un indicateur calculé par Glaux).
+    pub key: Option<String>,
+}
+
 /// Un indicateur tel qu'envoyé à l'interface.
 #[derive(Clone, Serialize)]
 pub struct IndicatorView {
@@ -371,6 +381,32 @@ impl Store {
             months.clamp(1, MAX_DETAIL_MONTHS),
             today,
         ))
+    }
+
+    /// Toutes les séries (affichées, taux par pays, calculées) pour l'export Excel.
+    pub fn export_series(&self) -> Vec<ExportSeries> {
+        let Ok(cache) = self.cache.lock() else {
+            return Vec::new();
+        };
+        SERIES
+            .iter()
+            .map(|def| def.id)
+            .chain(DERIVED.iter().map(|(id, _)| *id))
+            .filter_map(|id| {
+                let (observations, _, step) = series_data(&cache, id)?;
+                Some(ExportSeries {
+                    id,
+                    observations: observations.into_owned(),
+                    step,
+                    key: SERIES.iter().find(|d| d.id == id).map(|d| d.full_key()),
+                })
+            })
+            .collect()
+    }
+
+    /// Dernier téléchargement complet réussi (secondes Unix).
+    pub fn last_success(&self) -> Option<i64> {
+        self.cache.lock().ok().and_then(|c| c.last_success)
     }
 
     /// Construit la vue envoyée à l'interface : les 6 séries BCE affichées, puis les indicateurs calculés.

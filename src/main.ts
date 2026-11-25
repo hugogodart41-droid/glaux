@@ -43,6 +43,8 @@ let detailMonths = 60;
 const historyCache = new Map<string, Observation[]>();
 /** Numéro de la dernière demande d'historique : ignore les réponses arrivées en retard. */
 let detailRequest = 0;
+/** Message passager à la place du statut (ex. « Fichier Excel enregistré »), jusqu'à `until`. */
+let statusFlash: { text: string; detail: string; until: number } | null = null;
 /** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
 let exportFormat: ExportFormat = loadExportFormat();
 
@@ -160,6 +162,15 @@ function renderStatus(view: DashboardView): void {
   const status = $("status");
   const refresh = $("refresh");
   if (!status || !refresh) return;
+
+  // Message passager (export Excel) : prioritaire pendant quelques secondes.
+  if (statusFlash && Date.now() < statusFlash.until) {
+    status.textContent = statusFlash.text;
+    status.setAttribute("data-tooltip", statusFlash.detail);
+    refresh.classList.toggle("is-spinning", view.refreshing);
+    return;
+  }
+  statusFlash = null;
 
   const hasData = view.indicators.some((i) => i.latest);
   const strings = t();
@@ -472,6 +483,29 @@ async function exportCurrent(action: "save" | "copy"): Promise<void> {
   }, 2500);
 }
 
+// ---------- Export Excel ----------
+
+/** Toutes les séries dans un fichier Excel (Documents › Glaux), montré dans le Finder. */
+async function exportExcel(): Promise<void> {
+  const button = $("excel");
+  if (!button || button.classList.contains("is-busy")) return;
+  button.classList.add("is-busy");
+  try {
+    const path = await invoke<string>("export_excel");
+    statusFlash = { text: t().excelDone, detail: path, until: Date.now() + 5000 };
+  } catch (err) {
+    console.error("Export Excel impossible :", err);
+    statusFlash = { text: t().excelFailed, detail: String(err), until: Date.now() + 8000 };
+  }
+  button.classList.remove("is-busy");
+  const flash = statusFlash;
+  if (dashboard) renderStatus(dashboard);
+  // Le statut normal revient à la fin du message.
+  window.setTimeout(() => {
+    if (dashboard && statusFlash === flash) renderStatus(dashboard);
+  }, flash.until - Date.now() + 50);
+}
+
 // ---------- Alertes (notifications) ----------
 
 function renderAlertsToggle(view: DashboardView): void {
@@ -578,6 +612,9 @@ function applyStaticTexts(): void {
   set("#language", strings.switchLanguage, strings.switchLanguageHint);
   applyExportButtons();
 
+  const excel = $("excel");
+  excel?.setAttribute("aria-label", strings.excelAria);
+  excel?.setAttribute("data-tooltip", strings.excelHint);
   const refresh = $("refresh");
   refresh?.setAttribute("aria-label", strings.refresh);
   refresh?.setAttribute("data-tooltip", strings.refreshHint(keys("R")));
@@ -600,6 +637,7 @@ function refreshNow(): void {
 function setupButtons(): void {
   $("quit")?.addEventListener("click", quitApp);
   $("refresh")?.addEventListener("click", refreshNow);
+  $("excel")?.addEventListener("click", () => void exportExcel());
   $("language")?.addEventListener("click", toggleLanguage);
   $("update")?.addEventListener("click", installUpdate);
 

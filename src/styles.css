@@ -318,6 +318,27 @@ body {
   outline: none;
 }
 
+.icon-button svg {
+  display: block;
+}
+
+/* Icône sans ligne de base : centrée sur la hauteur du texte voisin. */
+#excel {
+  align-self: center;
+}
+
+/* Export Excel en cours : l'icône pulse en or. */
+.icon-button.is-busy {
+  color: var(--or);
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+
 .icon-button.is-spinning {
   color: var(--or);
   animation: spin 0.9s linear infinite;

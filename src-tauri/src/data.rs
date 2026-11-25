@@ -44,7 +44,10 @@ pub fn parse_period(period: &str) -> Option<NaiveDate> {
 /// Valeur « en vigueur » à chaque date de `dates` (croissantes) : la dernière
 /// observation datée au plus tard de cette date. Un seul passage sur les deux
 /// listes (rapide même sur 5 ans de données quotidiennes).
-fn values_at_dates(observations: &[Observation], dates: &[NaiveDate]) -> Vec<Option<f64>> {
+pub(crate) fn values_at_dates(
+    observations: &[Observation],
+    dates: &[NaiveDate],
+) -> Vec<Option<f64>> {
     let parsed: Vec<(NaiveDate, f64)> = observations
         .iter()
         .filter_map(|o| Some((parse_period(&o.date)?, o.value)))
