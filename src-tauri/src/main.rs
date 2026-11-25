@@ -224,10 +224,7 @@ fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, 
         .get("x-indicator")
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    let def = ecb::SERIES
-        .iter()
-        .find(|d| d.id == id)
-        .ok_or_else(|| "indicateur inconnu".to_string())?;
+    let name = store::export_name(id).ok_or_else(|| "indicateur inconnu".to_string())?;
 
     let dir = app
         .path()
@@ -237,7 +234,7 @@ fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, 
     std::fs::create_dir_all(&dir).map_err(|e| format!("création du dossier impossible : {e}"))?;
 
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
-    let path: PathBuf = dir.join(format!("Glaux_{}_{stamp}.png", def.id));
+    let path: PathBuf = dir.join(format!("Glaux_{name}_{stamp}.png"));
     std::fs::write(&path, bytes).map_err(|e| format!("enregistrement impossible : {e}"))?;
 
     reveal_in_file_manager(&path);

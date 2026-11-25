@@ -19,12 +19,20 @@ Le premier lancement compile Rust : compte 3 à 5 minutes. Les suivants prennent
 ```bash
 cd src-tauri
 cargo test                          # calculs et lecture des CSV (hors ligne)
-cargo test -- --ignored --nocapture # téléchargement réel des 6 séries BCE (Internet)
+cargo test -- --ignored --nocapture # téléchargement réel des 10 séries BCE (Internet)
 ```
 
 ## Données
 
-Source : API publique de la BCE (sans clé, sans compte). Les 6 séries sont définies dans `src-tauri/src/ecb.rs`.
+Source : API publique de la BCE (sans clé, sans compte). Les séries sont définies dans `src-tauri/src/ecb.rs` :
+les 6 indicateurs affichés, plus les taux à 10 ans de l'Allemagne, de la France, de l'Italie et de l'Espagne
+(jeu `IRS`, statistiques de convergence : moyennes mensuelles, publiées environ 3 semaines après la fin du mois).
+
+Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en cache) :
+- taux réel = taux de dépôt − inflation ; pente = taux souverain 10 ans − €STR ;
+- écarts de taux avec l'Allemagne (France, Italie, Espagne), en points de base, affichés sur une seule ligne
+  (« groupe » `spreads` : `src/indicators.ts`) avec trois courbes superposées en vue détail et à l'export.
+Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
 Préférences (alertes activées, rappels déjà envoyés, langue) : `prefs.json`, dans le même dossier que le cache.

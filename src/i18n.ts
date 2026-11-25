@@ -70,10 +70,14 @@ const fr = {
   derivedSection: "Calculés par Glaux",
   derivedHint: "Indicateurs calculés à partir des séries de la BCE.",
   sparkHint: (low: string, high: string) => `Sur 1 an : plus bas ${low}, plus haut ${high}`,
+  /** Sous-titre d'un groupe en points de base (écarts de taux). */
+  groupSub: (date: string) => `en pb · ${date}`,
+  memberHint: (label: string, value: string, change: string) => `${label} : ${value} (${change})`,
 
   // Unités et variations
   percent: (n: string) => `${n}${NNBSP}%`,
   basisPoints: (n: string) => `${n}${NNBSP}pb`,
+  bpUnit: "pb",
   /** Variation d'un taux, en points. */
   points: (n: string) => `${n}${NNBSP}pt`,
   change: (text: string) => `${text} sur 1 mois`,
@@ -88,6 +92,8 @@ const fr = {
   range: (low: string, high: string) => `Plus bas ${low} · plus haut ${high}`,
   noHistory: "Pas encore d'historique",
   readout: (date: string, value: string) => `${date} : ${value}`,
+  hoverHint: "Survoler la courbe pour lire chaque mois",
+  monthlyAverages: "Moyennes mensuelles",
   exportImage: "Exporter l'image",
   exportHint: (keys: string) => `Enregistrer en PNG dans Images › Glaux (${keys})`,
   exporting: "Export…",
@@ -153,9 +159,12 @@ const en: Strings = {
   derivedSection: "Computed by Glaux",
   derivedHint: "Indicators computed from ECB series.",
   sparkHint: (low, high) => `Past year: low ${low}, high ${high}`,
+  groupSub: (date) => `in bp · ${date}`,
+  memberHint: (label, value, change) => `${label}: ${value} (${change})`,
 
   percent: (n) => `${n}%`,
   basisPoints: (n) => `${n} bp`,
+  bpUnit: "bp",
   points: (n) => `${n} pp`,
   change: (text) => `${text} over 1 month`,
   stable: "unchanged over 1 month",
@@ -168,6 +177,8 @@ const en: Strings = {
   range: (low, high) => `Low ${low} · high ${high}`,
   noHistory: "No history yet",
   readout: (date, value) => `${date}: ${value}`,
+  hoverHint: "Hover over the chart to read each month",
+  monthlyAverages: "Monthly averages",
   exportImage: "Export image",
   exportHint: (keys) => `Save as PNG in Pictures › Glaux (${keys})`,
   exporting: "Exporting…",

@@ -20,6 +20,8 @@ pub struct SeriesDef {
     pub frequency: Frequency,
     /// Taux qui ne bouge qu'aux décisions de la BCE (courbe en escalier).
     pub step: bool,
+    /// Affichée comme une ligne du panneau ; sinon, sert seulement aux indicateurs calculés.
+    pub shown: bool,
 }
 
 impl SeriesDef {
@@ -29,8 +31,9 @@ impl SeriesDef {
     }
 }
 
-/// Les 6 indicateurs de la V1, dans l'ordre d'affichage.
-pub const SERIES: [SeriesDef; 6] = [
+/// Séries téléchargées : les 6 indicateurs affichés (dans l'ordre du panneau), puis les taux
+/// à 10 ans par pays, qui servent aux écarts de taux (calculés dans store.rs).
+pub const SERIES: [SeriesDef; 10] = [
     // Taux de la facilité de dépôt : le taux directeur de référence de la BCE.
     SeriesDef {
         id: "deposit_rate",
@@ -38,6 +41,7 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "D.U2.EUR.4F.KR.DFR.LEV",
         frequency: Frequency::Daily,
         step: true,
+        shown: true,
     },
     // Inflation IPCH, zone euro, glissement annuel (jeu « HICP » qui remplace « ICP » depuis 2026).
     SeriesDef {
@@ -46,6 +50,7 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "M.U2.N.000000.4D0.ANR",
         frequency: Frequency::Monthly,
         step: false,
+        shown: true,
     },
     // €STR : taux interbancaire au jour le jour, moyenne tronquée pondérée par les volumes.
     SeriesDef {
@@ -54,6 +59,7 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "B.EU000A2X2A25.WT",
         frequency: Frequency::Daily,
         step: false,
+        shown: true,
     },
     // Taux souverain 10 ans : courbe des taux BCE, toutes notations (taux au comptant).
     SeriesDef {
@@ -62,6 +68,7 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "B.U2.EUR.4F.G_N_C.SV_C_YM.SR_10Y",
         frequency: Frequency::Daily,
         step: false,
+        shown: true,
     },
     // Cours de référence EUR/USD (publié vers 16 h, heure de Francfort).
     SeriesDef {
@@ -70,6 +77,7 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "D.USD.EUR.SP00.A",
         frequency: Frequency::Daily,
         step: false,
+        shown: true,
     },
     // Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.
     SeriesDef {
@@ -78,6 +86,41 @@ pub const SERIES: [SeriesDef; 6] = [
         key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
         frequency: Frequency::Monthly,
         step: false,
+        shown: true,
+    },
+    // Taux d'emprunt à 10 ans par pays : statistiques de convergence (critères de Maastricht),
+    // moyennes mensuelles publiées par la BCE, environ 3 semaines après la fin du mois.
+    SeriesDef {
+        id: "yield_de",
+        flow: "IRS",
+        key: "M.DE.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_fr",
+        flow: "IRS",
+        key: "M.FR.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_it",
+        flow: "IRS",
+        key: "M.IT.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_es",
+        flow: "IRS",
+        key: "M.ES.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
     },
 ];
 
@@ -257,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn six_series_avec_identifiants_uniques() {
+    fn series_avec_identifiants_uniques() {
         let mut ids: Vec<_> = SERIES.iter().map(|s| s.id).collect();
         ids.sort();
         ids.dedup();

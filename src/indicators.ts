@@ -34,6 +34,10 @@ const FORMATS: Record<string, Format> = {
   // Calculés par Glaux (src-tauri/src/data.rs)
   real_rate: { kind: "rate", decimals: 2, monthly: true },
   slope: { kind: "bp", decimals: 2, monthly: false },
+  // Écarts de taux à 10 ans avec l'Allemagne (groupe « spreads »), en points de base.
+  spread_fr: { kind: "bp", decimals: 2, monthly: true },
+  spread_it: { kind: "bp", decimals: 2, monthly: true },
+  spread_es: { kind: "bp", decimals: 2, monthly: true },
 };
 
 const TEXTS: Record<Lang, Record<string, Texts>> = {
@@ -79,6 +83,21 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       hint: "Taux de dépôt de la BCE moins l'inflation sur 1 an : le coût de l'argent une fois l'inflation déduite.",
       explanation:
         "Taux de dépôt moins inflation. Négatif, la politique monétaire reste accommodante même quand les taux montent ; positif, elle freine vraiment l'économie.",
+    },
+    spread_fr: {
+      label: "France",
+      hint: "OAT − Bund : taux d'emprunt à 10 ans de la France moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_it: {
+      label: "Italie",
+      hint: "BTP − Bund : taux d'emprunt à 10 ans de l'Italie moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_es: {
+      label: "Espagne",
+      hint: "Bonos − Bund : taux d'emprunt à 10 ans de l'Espagne moins celui de l'Allemagne.",
+      explanation: "",
     },
     slope: {
       label: "Pente 10 ans − €STR",
@@ -130,6 +149,21 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation:
         "Deposit rate minus inflation. When negative, policy stays accommodative even as rates rise; when positive, it genuinely holds the economy back.",
     },
+    spread_fr: {
+      label: "France",
+      hint: "OAT − Bund: France's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_it: {
+      label: "Italy",
+      hint: "BTP − Bund: Italy's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_es: {
+      label: "Spain",
+      hint: "Bonos − Bund: Spain's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
     slope: {
       label: "Slope 10Y − €STR",
       hint: "Spread between the 10-year sovereign yield and the overnight rate, in basis points.",
@@ -144,4 +178,56 @@ export function displayFor(id: string): Display | undefined {
   const format = FORMATS[id];
   const texts = TEXTS[lang()][id];
   return format && texts ? { ...format, ...texts } : undefined;
+}
+
+// ---------- Groupes : plusieurs indicateurs sur une même ligne ----------
+
+/** Un membre d'un groupe : indicateur, code court et couleur de sa courbe. */
+export type GroupMember = { id: string; code: string; color: string };
+
+export type GroupDisplay = {
+  /** Titre de la vue détail et de l'image exportée. */
+  label: string;
+  /** Nom court, sur la ligne du panneau. */
+  short: string;
+  hint: string;
+  explanation: string;
+  members: GroupMember[];
+};
+
+/** Membres de chaque groupe, dans l'ordre d'affichage. Couleurs lisibles sur le fond nuit. */
+const GROUP_MEMBERS: Record<string, GroupMember[]> = {
+  spreads: [
+    { id: "spread_fr", code: "FR", color: "#c9a24a" }, // or
+    { id: "spread_it", code: "IT", color: "#f5f1e8" }, // crème
+    { id: "spread_es", code: "ES", color: "#7fa2c9" }, // bleu gris
+  ],
+};
+
+const GROUP_TEXTS: Record<Lang, Record<string, Pick<GroupDisplay, "label" | "short" | "hint" | "explanation">>> = {
+  fr: {
+    spreads: {
+      label: "Écarts de taux à 10 ans",
+      short: "Écarts vs Allemagne",
+      hint: "Taux d'emprunt à 10 ans de chaque État moins celui de l'Allemagne (Bund), en points de base.",
+      explanation:
+        "La prime que paie chaque État par rapport à l'Allemagne, la référence. Elle grimpe quand les marchés doutent de ses finances publiques ou de sa stabilité politique.",
+    },
+  },
+  en: {
+    spreads: {
+      label: "10-year spreads",
+      short: "Spreads vs Germany",
+      hint: "Each government's 10-year borrowing rate minus Germany's (Bund), in basis points.",
+      explanation:
+        "The premium each government pays compared with Germany, the benchmark. It widens when markets doubt a country's public finances or political stability.",
+    },
+  },
+};
+
+/** Groupe d'affichage (undefined : groupe inconnu de l'interface). */
+export function groupFor(id: string): GroupDisplay | undefined {
+  const members = GROUP_MEMBERS[id];
+  const texts = GROUP_TEXTS[lang()][id];
+  return members && texts ? { ...texts, members } : undefined;
 }

@@ -1,15 +1,16 @@
 # Glaux
 
 **Euro area macro dashboard in your menu bar (Mac) or system tray (Windows).**
-ECB deposit rate, inflation, €STR, 10-year sovereign yield, EUR/USD and unemployment, plus a real rate and a yield-curve slope computed by Glaux. In English and French.
+ECB deposit rate, inflation, €STR, 10-year sovereign yield, EUR/USD and unemployment, plus a real rate, a yield-curve slope and 10-year spreads against Germany (France, Italy, Spain) computed by Glaux. In English and French.
 
 Data comes straight from the European Central Bank's official API. No account, no tracking.
 
-> **En français.** Glaux est un tableau de bord macro de la zone euro, dans la barre des menus (Mac) ou la zone de notification (Windows) : taux de la BCE, inflation, €STR, taux à 10 ans, EUR/USD, chômage, taux réel et pente des taux. Données officielles de la BCE, sans compte ni pistage. Installation ci-dessous ; sur Mac, la première ouverture passe par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+> **En français.** Glaux est un tableau de bord macro de la zone euro, dans la barre des menus (Mac) ou la zone de notification (Windows) : taux de la BCE, inflation, €STR, taux à 10 ans, EUR/USD, chômage, taux réel, pente des taux et écarts de taux avec l'Allemagne (France, Italie, Espagne). Données officielles de la BCE, sans compte ni pistage. Installation ci-dessous ; sur Mac, la première ouverture passe par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
 
 ## Features
 
 - 8 indicators: latest value, change over 1 month and a 1-year mini chart
+- 10-year spreads against Germany for France, Italy and Spain, on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
 - PNG export (1080 × 1350), ready for LinkedIn, Instagram or TikTok
 - Calendar: next ECB decision and next flash inflation release, with a reminder on the day

@@ -49,7 +49,7 @@ struct CachedSeries {
 #[serde(rename_all = "camelCase")]
 struct CacheFile {
     version: u32,
-    /// Dernière actualisation où les 6 séries ont été téléchargées (secondes Unix).
+    /// Dernière actualisation où toutes les séries ont été téléchargées (secondes Unix).
     last_success: Option<i64>,
     series: Vec<CachedSeries>,
 }
@@ -81,11 +81,33 @@ const MAX_REMINDED: usize = 60;
 
 /// Indicateurs calculés par Glaux à partir des séries BCE (après les 6 séries, dans cet ordre).
 /// - « real_rate » : taux réel = taux de dépôt − inflation (mensuel) ;
-/// - « slope » : pente des taux = taux souverain 10 ans − €STR (quotidien).
-const DERIVED: [(&str, Frequency); 2] = [
+/// - « slope » : pente des taux = taux souverain 10 ans − €STR (quotidien) ;
+/// - « spread_fr / _it / _es » : écart de taux à 10 ans avec l'Allemagne (mensuel),
+///   affichés ensemble dans le panneau (groupe « spreads »).
+const DERIVED: [(&str, Frequency); 5] = [
     ("real_rate", Frequency::Monthly),
     ("slope", Frequency::Daily),
+    ("spread_fr", Frequency::Monthly),
+    ("spread_it", Frequency::Monthly),
+    ("spread_es", Frequency::Monthly),
 ];
+
+/// Groupe d'affichage d'un indicateur (plusieurs indicateurs sur une même ligne du panneau).
+fn group_of(id: &str) -> Option<&'static str> {
+    id.starts_with("spread_").then_some("spreads")
+}
+
+/// Nom sûr pour un fichier exporté : l'identifiant connu correspondant (série affichée,
+/// indicateur calculé ou groupe), jamais le texte reçu de l'interface.
+pub fn export_name(id: &str) -> Option<&'static str> {
+    SERIES
+        .iter()
+        .filter(|def| def.shown)
+        .map(|def| def.id)
+        .chain(DERIVED.iter().map(|(derived, _)| *derived))
+        .chain(["spreads"])
+        .find(|known| *known == id)
+}
 
 /// Un indicateur tel qu'envoyé à l'interface.
 #[derive(Clone, Serialize)]
@@ -93,6 +115,8 @@ pub struct IndicatorView {
     pub id: &'static str,
     /// Vrai pour un indicateur calculé par Glaux (affiché dans une section à part).
     pub derived: bool,
+    /// Groupe affiché sur une seule ligne (ex. « spreads » : écarts France, Italie, Espagne).
+    pub group: Option<&'static str>,
     #[serde(flatten)]
     pub summary: Summary,
     /// Mini-courbe : valeurs de la dernière année, à intervalles réguliers.
@@ -176,11 +200,21 @@ impl Store {
         }
     }
 
-    /// Vrai si les données ont plus de 6 h, ou s'il n'y en a jamais eu.
+    /// Vrai si les données ont plus de 6 h, s'il n'y en a jamais eu, ou s'il manque une série
+    /// (nouvelle version de Glaux qui suit une série de plus : téléchargée sans attendre 6 h).
     pub fn needs_refresh(&self) -> bool {
-        let last = self.cache.lock().ok().and_then(|c| c.last_success);
-        match last {
+        let Ok(cache) = self.cache.lock() else {
+            return true;
+        };
+        let missing = SERIES.iter().any(|def| {
+            !cache
+                .series
+                .iter()
+                .any(|s| s.id == def.id && s.key == def.full_key())
+        });
+        match cache.last_success {
             None => true,
+            Some(_) if missing => true,
             Some(t) => Utc::now().timestamp() - t > MAX_AGE.as_secs() as i64,
         }
     }
@@ -193,7 +227,7 @@ impl Store {
             .map(|_| RefreshGuard(&self.refreshing))
     }
 
-    /// Télécharge les 6 séries (bloquant : à appeler hors du fil principal).
+    /// Télécharge toutes les séries (bloquant : à appeler hors du fil principal).
     /// Une série en échec garde ses anciennes données.
     /// Renvoie les alertes à afficher : changement du taux de dépôt, nouvelle inflation.
     pub fn download_all(&self) -> Vec<Alert> {
@@ -339,7 +373,7 @@ impl Store {
         ))
     }
 
-    /// Construit la vue envoyée à l'interface : les 6 séries BCE, puis les indicateurs calculés.
+    /// Construit la vue envoyée à l'interface : les 6 séries BCE affichées, puis les indicateurs calculés.
     pub fn view(&self, today: NaiveDate) -> DashboardView {
         let cache = self.cache.lock().ok();
         let empty = CacheFile::default();
@@ -347,6 +381,7 @@ impl Store {
 
         let ids = SERIES
             .iter()
+            .filter(|def| def.shown)
             .map(|def| (def.id, false))
             .chain(DERIVED.iter().map(|(id, _)| (*id, true)));
         let indicators = ids
@@ -355,6 +390,7 @@ impl Store {
                 Some(IndicatorView {
                     id,
                     derived,
+                    group: group_of(id),
                     summary: summarize(&observations, frequency, step, today),
                     spark: sparkline(&observations, frequency, today),
                 })
@@ -404,6 +440,10 @@ fn series_data<'a>(
     let observations = match id {
         "real_rate" => real_rate(cached(cache, "deposit_rate"), cached(cache, "hicp")),
         "slope" => spread(cached(cache, "yield_10y"), cached(cache, "estr")),
+        // Écarts avec l'Allemagne (Bund) : mêmes mois des deux côtés.
+        "spread_fr" => spread(cached(cache, "yield_fr"), cached(cache, "yield_de")),
+        "spread_it" => spread(cached(cache, "yield_it"), cached(cache, "yield_de")),
+        "spread_es" => spread(cached(cache, "yield_es"), cached(cache, "yield_de")),
         _ => return None,
     };
     Some((Cow::Owned(observations), *frequency, false))
@@ -450,6 +490,88 @@ mod tests {
         assert_eq!(slope.last().unwrap().value, 1.487);
 
         assert!(series_data(&cache, "inconnu").is_none());
+    }
+
+    #[test]
+    fn noms_d_export_autorises() {
+        assert_eq!(export_name("eurusd"), Some("eurusd"));
+        assert_eq!(export_name("real_rate"), Some("real_rate")); // calculé : refusé avant la V2
+        assert_eq!(export_name("spreads"), Some("spreads"));
+        assert_eq!(export_name("yield_fr"), None); // série cachée
+        assert_eq!(export_name("../../etc"), None);
+    }
+
+    #[test]
+    fn ecarts_de_taux_avec_l_allemagne() {
+        let cache = CacheFile {
+            version: CACHE_VERSION,
+            last_success: Some(Utc::now().timestamp()),
+            series: vec![
+                series("yield_de", &[("2026-09", 3.473), ("2026-10", 3.416)]),
+                series("yield_fr", &[("2026-09", 4.44), ("2026-10", 4.89)]),
+                series("yield_it", &[("2026-09", 4.362), ("2026-10", 4.68)]),
+            ],
+        };
+        let (fr, frequency, _) = series_data(&cache, "spread_fr").unwrap();
+        assert_eq!(frequency, Frequency::Monthly);
+        assert_eq!(fr.len(), 2);
+        assert_eq!(fr[0].value, 0.967);
+        assert_eq!(fr[1].value, 1.474); // 147 pb en octobre 2026
+        let (it, _, _) = series_data(&cache, "spread_it").unwrap();
+        assert_eq!(it.last().unwrap().value, 1.264);
+        // Espagne absente du cache : pas de valeur, pas de plantage.
+        assert!(series_data(&cache, "spread_es").unwrap().0.is_empty());
+
+        assert_eq!(group_of("spread_fr"), Some("spreads"));
+        assert_eq!(group_of("slope"), None);
+    }
+
+    #[test]
+    fn vue_sans_les_taux_par_pays_et_avec_le_groupe() {
+        let dir = temp_dir("vue-ecarts");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        if let Ok(mut cache) = store.cache.lock() {
+            cache.series = vec![
+                series("yield_de", &[("2026-10", 3.416)]),
+                series("yield_fr", &[("2026-10", 4.89)]),
+            ];
+        }
+        let view = store.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
+        // Les taux par pays servent au calcul mais ne sont pas des lignes du panneau.
+        let country_yields = ["yield_de", "yield_fr", "yield_it", "yield_es"];
+        assert!(view
+            .indicators
+            .iter()
+            .all(|i| !country_yields.contains(&i.id)));
+        assert!(view.indicators.iter().any(|i| i.id == "yield_10y")); // taux zone euro : affiché
+        let fr = view
+            .indicators
+            .iter()
+            .find(|i| i.id == "spread_fr")
+            .unwrap();
+        assert_eq!(fr.group, Some("spreads"));
+        assert!(fr.derived);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn nouvelle_serie_absente_du_cache_declenche_un_telechargement() {
+        let dir = temp_dir("serie-manquante");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        if let Ok(mut cache) = store.cache.lock() {
+            cache.last_success = Some(Utc::now().timestamp()); // données fraîches…
+            cache.series = SERIES
+                .iter()
+                .filter(|d| d.shown) // … mais sans les taux par pays (cache de la v0.1)
+                .map(|d| series(d.id, &[]))
+                .collect();
+        }
+        assert!(store.needs_refresh());
+        if let Ok(mut cache) = store.cache.lock() {
+            cache.series = SERIES.iter().map(|d| series(d.id, &[])).collect();
+        }
+        assert!(!store.needs_refresh());
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Dossier temporaire propre à un test.

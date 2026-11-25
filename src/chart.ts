@@ -3,6 +3,8 @@
 // - courbe de la vue détail (SVG, survolable) ;
 // - courbe de l'image exportée (canvas).
 // La géométrie (échelles, graduations, tracé) est commune aux trois.
+// Vue détail et image acceptent plusieurs courbes (ex. écarts France, Italie, Espagne) :
+// une seule courbe garde l'aire dorée ; plusieurs courbes sont tracées chacune dans sa couleur.
 
 import { formatNumber, formatValue, parsePeriod } from "./format";
 import { locale, t } from "./i18n";
@@ -105,26 +107,61 @@ export function project(values: number[], box: Box, scale: { lo: number; hi: num
   return { x, y };
 }
 
-/** Tracé SVG/canvas : segments droits, ou marches (horizontal puis vertical) pour un taux directeur. */
-export function linePath(values: number[], x: (i: number) => number, y: (v: number) => number, step: boolean): string {
-  let d = `M${x(0).toFixed(1)},${y(values[0]).toFixed(1)}`;
-  for (let i = 1; i < values.length; i++) {
-    d += step
-      ? `H${x(i).toFixed(1)}V${y(values[i]).toFixed(1)}`
-      : `L${x(i).toFixed(1)},${y(values[i]).toFixed(1)}`;
-  }
+/**
+ * Tracé SVG/canvas : segments droits, ou marches (horizontal puis vertical) pour un taux directeur.
+ * Une valeur manquante (null) coupe la courbe.
+ */
+export function linePath(
+  values: (number | null)[],
+  x: (i: number) => number,
+  y: (v: number) => number,
+  step: boolean,
+): string {
+  let d = "";
+  let drawing = false;
+  values.forEach((v, i) => {
+    if (v === null) {
+      drawing = false;
+      return;
+    }
+    if (!drawing) d += `M${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+    else d += step ? `H${x(i).toFixed(1)}V${y(v).toFixed(1)}` : `L${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+    drawing = true;
+  });
   return d;
+}
+
+/** Une courbe d'un graphique (vue détail ou image exportée). */
+export type ChartSeries = { points: Observation[]; color: string };
+
+/**
+ * Dates de toutes les courbes (réunies, dans l'ordre) et valeur de chaque courbe à chacune
+ * (null si la courbe n'a pas de valeur ce jour-là ou ce mois-là).
+ */
+export function alignSeries(series: ChartSeries[]): { dates: string[]; rows: (number | null)[][] } {
+  const dates = [...new Set(series.flatMap((s) => s.points.map((p) => p.date)))].sort();
+  const rows = series.map((s) => {
+    const byDate = new Map(s.points.map((p) => [p.date, p.value]));
+    return dates.map((date) => byDate.get(date) ?? null);
+  });
+  return { dates, rows };
+}
+
+/** Rang de la dernière valeur connue d'une courbe (-1 si aucune). */
+function lastIndex(values: (number | null)[]): number {
+  for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null) return i;
+  return -1;
 }
 
 /**
  * Étiquettes de l'axe horizontal : les années (période > 1 an) ou un mois sur trois (1 an).
  * Renvoie le rang du premier point de chaque année / mois concerné.
  */
-export function timeLabels(points: Observation[], months: number): { index: number; text: string }[] {
+export function timeLabels(dates: string[], months: number): { index: number; text: string }[] {
   const labels: { index: number; text: string }[] = [];
   let previousKey = "";
-  points.forEach((point, index) => {
-    const date = parsePeriod(point.date);
+  dates.forEach((period, index) => {
+    const date = parsePeriod(period);
     if (!date) return;
     const byYear = months > 12;
     const key = byYear ? String(date.getFullYear()) : `${date.getFullYear()}-${date.getMonth()}`;
@@ -190,21 +227,23 @@ const DETAIL_LABEL_FONT = `10px -apple-system, BlinkMacSystemFont, "Segoe UI", s
 const DETAIL_LABEL_GAP = 6; // espace entre les valeurs des graduations et la courbe
 
 /**
- * Dessine la courbe de la vue détail. `onHover` reçoit le point survolé (ou null en sortie).
+ * Dessine la courbe de la vue détail (une ou plusieurs courbes).
+ * `onHover` reçoit la date survolée et la valeur de chaque courbe (ou null en sortie).
  */
 export function renderDetailChart(
-  points: Observation[],
+  series: ChartSeries[],
   display: Display,
   months: number,
   width: number,
   height: number,
-  onHover: (point: Observation | null) => void,
+  onHover: (date: string | null, values: (number | null)[]) => void,
 ): SVGSVGElement {
   const root = svg("svg", { class: "chart", width, height, viewBox: `0 0 ${width} ${height}` });
-  if (points.length < 2) return root;
+  const { dates, rows } = alignSeries(series);
+  const all = rows.flat().filter((v): v is number => v !== null);
+  if (dates.length < 2 || all.length < 2) return root;
 
-  const values = points.map((p) => p.value);
-  const scale = niceScale(values, maxTickDecimals(display));
+  const scale = niceScale(all, maxTickDecimals(display));
   const tickTexts = scale.ticks.map((t) => formatTick(t, scale.step, display));
 
   // Marge à gauche pour les valeurs des graduations : la courbe ne les recouvre jamais.
@@ -215,14 +254,14 @@ export function renderDetailChart(
     width: width - DETAIL_PAD.left - gutter - DETAIL_LABEL_GAP - DETAIL_PAD.right,
     height: height - DETAIL_PAD.top - DETAIL_PAD.bottom,
   };
-  const { x, y } = project(values, box, scale);
+  const { x, y } = project(dates.map(() => 0), box, scale);
+  const bottom = box.top + box.height;
+  const last = dates.length - 1;
 
   // Graduations : ligne horizontale + valeur alignée à droite dans la marge.
   scale.ticks.forEach((tick, k) => {
     const ty = y(tick);
-    root.append(
-      svg("line", { x1: box.left, x2: box.left + box.width, y1: ty, y2: ty, class: "chart__grid" }),
-    );
+    root.append(svg("line", { x1: box.left, x2: box.left + box.width, y1: ty, y2: ty, class: "chart__grid" }));
     const label = svg("text", {
       x: DETAIL_PAD.left + gutter,
       y: ty,
@@ -235,59 +274,87 @@ export function renderDetailChart(
   });
 
   // Étiquettes de temps sous la courbe.
-  for (const { index, text } of timeLabels(points, months)) {
+  for (const { index, text } of timeLabels(dates, months)) {
     const tx = x(index);
-    root.append(svg("line", { x1: tx, x2: tx, y1: box.top + box.height, y2: box.top + box.height + 3, class: "chart__grid" }));
+    root.append(svg("line", { x1: tx, x2: tx, y1: bottom, y2: bottom + 3, class: "chart__grid" }));
     const label = svg("text", { x: tx, y: height - 4, class: "chart__label", "text-anchor": "middle" });
     label.textContent = text;
     root.append(label);
   }
 
-  // Aire dorée en dégradé sous la courbe, puis la courbe.
-  const line = linePath(values, x, y, !!display.step);
-  const bottom = box.top + box.height;
-  const gradient = svg("linearGradient", { id: "chart-fill", x1: 0, x2: 0, y1: 0, y2: 1 });
-  gradient.append(
-    svg("stop", { offset: "0%", "stop-color": COLORS.or, "stop-opacity": 0.28 }),
-    svg("stop", { offset: "100%", "stop-color": COLORS.or, "stop-opacity": 0 }),
-  );
-  const defs = svg("defs", {});
-  defs.append(gradient);
-  const last = values.length - 1;
-  root.append(
-    defs,
-    svg("path", {
-      d: `${line}L${x(last).toFixed(1)},${bottom}L${x(0).toFixed(1)},${bottom}Z`,
-      class: "chart__area",
-      fill: "url(#chart-fill)",
-    }),
-    svg("path", { d: line, class: "chart__line" }),
-  );
+  const single = series.length === 1;
+  if (single) {
+    // Une seule courbe : aire dorée en dégradé dessous.
+    const values = rows[0];
+    const first = values.findIndex((v) => v !== null);
+    const end = lastIndex(values);
+    const gradient = svg("linearGradient", { id: "chart-fill", x1: 0, x2: 0, y1: 0, y2: 1 });
+    gradient.append(
+      svg("stop", { offset: "0%", "stop-color": COLORS.or, "stop-opacity": 0.28 }),
+      svg("stop", { offset: "100%", "stop-color": COLORS.or, "stop-opacity": 0 }),
+    );
+    const defs = svg("defs", {});
+    defs.append(gradient);
+    root.append(
+      defs,
+      svg("path", {
+        d: `${linePath(values, x, y, !!display.step)}L${x(end).toFixed(1)},${bottom}L${x(first).toFixed(1)},${bottom}Z`,
+        class: "chart__area",
+        fill: "url(#chart-fill)",
+      }),
+    );
+  }
 
-  // Survol : ligne verticale + point sur la valeur la plus proche.
+  // Courbes, puis point final de chacune.
+  rows.forEach((values, k) => {
+    const attrs: Record<string, string> = { d: linePath(values, x, y, !!display.step), class: "chart__line" };
+    if (!single) {
+      attrs.class = "chart__line chart__line--multi";
+      attrs.style = `stroke: ${series[k].color}`;
+    }
+    root.append(svg("path", attrs));
+  });
+  rows.forEach((values, k) => {
+    const end = lastIndex(values);
+    const value = values[end];
+    if (value === null || value === undefined) return;
+    root.append(svg("circle", { cx: x(end), cy: y(value), r: 3, class: "chart__dot", style: `fill: ${series[k].color}` }));
+  });
+
+  // Survol : ligne verticale + un point par courbe sur la date la plus proche.
   const cursor = svg("line", { y1: box.top, y2: bottom, class: "chart__cursor", visibility: "hidden" });
-  const dot = svg("circle", { r: 3.5, class: "chart__dot", visibility: "hidden" });
-  const lastDot = svg("circle", { cx: x(last), cy: y(values[last]), r: 3, class: "chart__dot" });
+  const dots = rows.map((_, k) =>
+    svg("circle", { r: 3.5, class: "chart__dot", visibility: "hidden", style: `fill: ${series[k].color}` }),
+  );
   const hit = svg("rect", { x: 0, y: 0, width, height, fill: "transparent" });
-  root.append(lastDot, cursor, dot, hit);
+  root.append(cursor, ...dots, hit);
 
+  const hide = () => {
+    cursor.setAttribute("visibility", "hidden");
+    dots.forEach((dot) => dot.setAttribute("visibility", "hidden"));
+  };
   hit.addEventListener("mousemove", (event) => {
     const rect = root.getBoundingClientRect();
-    const mx = event.clientX - rect.left;
-    const ratio = Math.min(1, Math.max(0, (mx - box.left) / box.width));
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left - box.left) / box.width));
     const i = Math.round(ratio * last);
     cursor.setAttribute("x1", String(x(i)));
     cursor.setAttribute("x2", String(x(i)));
-    dot.setAttribute("cx", String(x(i)));
-    dot.setAttribute("cy", String(y(values[i])));
     cursor.setAttribute("visibility", "visible");
-    dot.setAttribute("visibility", "visible");
-    onHover(points[i]);
+    rows.forEach((values, k) => {
+      const value = values[i];
+      if (value === null) {
+        dots[k].setAttribute("visibility", "hidden");
+        return;
+      }
+      dots[k].setAttribute("cx", String(x(i)));
+      dots[k].setAttribute("cy", String(y(value)));
+      dots[k].setAttribute("visibility", "visible");
+    });
+    onHover(dates[i], rows.map((values) => values[i]));
   });
   hit.addEventListener("mouseleave", () => {
-    cursor.setAttribute("visibility", "hidden");
-    dot.setAttribute("visibility", "hidden");
-    onHover(null);
+    hide();
+    onHover(null, []);
   });
 
   return root;
@@ -295,18 +362,22 @@ export function renderDetailChart(
 
 // ---------- Courbe de l'image exportée (canvas) ----------
 
-/** Dessine la courbe dans un canvas, pour l'image exportée. Tailles en pixels de l'image. */
+/**
+ * Dessine la courbe (une ou plusieurs) dans un canvas, pour l'image exportée.
+ * Tailles en pixels de l'image.
+ */
 export function drawChartOnCanvas(
   ctx: CanvasRenderingContext2D,
-  points: Observation[],
+  series: ChartSeries[],
   display: Display,
   months: number,
   frame: Box,
   font: string,
 ): void {
-  if (points.length < 2) return;
-  const values = points.map((p) => p.value);
-  const scale = niceScale(values, maxTickDecimals(display));
+  const { dates, rows } = alignSeries(series);
+  const all = rows.flat().filter((v): v is number => v !== null);
+  if (dates.length < 2 || all.length < 2) return;
+  const scale = niceScale(all, maxTickDecimals(display));
   const tickTexts = scale.ticks.map((t) => formatTick(t, scale.step, display));
 
   // Marge à gauche pour les valeurs des graduations : la courbe ne les recouvre jamais.
@@ -317,7 +388,7 @@ export function drawChartOnCanvas(
     width: frame.width - gutter - 20,
     height: frame.height,
   };
-  const { x, y } = project(values, plot, scale);
+  const { x, y } = project(dates.map(() => 0), plot, scale);
   const bottom = plot.top + plot.height;
 
   ctx.save();
@@ -341,33 +412,43 @@ export function drawChartOnCanvas(
 
   // Étiquettes de temps.
   ctx.textAlign = "center";
-  for (const { index, text } of timeLabels(points, months)) {
+  for (const { index, text } of timeLabels(dates, months)) {
     ctx.fillText(text, x(index), bottom + 44);
   }
 
-  // Aire en dégradé puis courbe.
-  const path = new Path2D(linePath(values, x, y, !!display.step));
-  const last = values.length - 1;
-  const area = new Path2D(
-    `${linePath(values, x, y, !!display.step)}L${x(last)},${bottom}L${x(0)},${bottom}Z`,
-  );
-  const gradient = ctx.createLinearGradient(0, plot.top, 0, bottom);
-  gradient.addColorStop(0, "rgba(201, 162, 74, 0.30)");
-  gradient.addColorStop(1, "rgba(201, 162, 74, 0)");
-  ctx.fillStyle = gradient;
-  ctx.fill(area);
+  const single = series.length === 1;
+  if (single) {
+    // Une seule courbe : aire en dégradé dessous.
+    const values = rows[0];
+    const first = values.findIndex((v) => v !== null);
+    const end = lastIndex(values);
+    const area = new Path2D(
+      `${linePath(values, x, y, !!display.step)}L${x(end)},${bottom}L${x(first)},${bottom}Z`,
+    );
+    const gradient = ctx.createLinearGradient(0, plot.top, 0, bottom);
+    gradient.addColorStop(0, "rgba(201, 162, 74, 0.30)");
+    gradient.addColorStop(1, "rgba(201, 162, 74, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fill(area);
+  }
 
-  ctx.strokeStyle = COLORS.or;
-  ctx.lineWidth = 5;
+  // Courbes puis point final de chacune.
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.stroke(path);
-
-  // Point final.
-  ctx.fillStyle = COLORS.or;
-  ctx.beginPath();
-  ctx.arc(x(last), y(values[last]), 9, 0, Math.PI * 2);
-  ctx.fill();
+  rows.forEach((values, k) => {
+    ctx.strokeStyle = series[k].color;
+    ctx.lineWidth = single ? 5 : 4;
+    ctx.stroke(new Path2D(linePath(values, x, y, !!display.step)));
+  });
+  rows.forEach((values, k) => {
+    const end = lastIndex(values);
+    const value = values[end];
+    if (value === null || value === undefined) return;
+    ctx.fillStyle = series[k].color;
+    ctx.beginPath();
+    ctx.arc(x(end), y(value), single ? 9 : 7, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
   ctx.restore();
 }

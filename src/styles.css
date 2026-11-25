@@ -14,6 +14,11 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* L'attribut hidden l'emporte toujours sur les display: flex des composants. */
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -181,6 +186,72 @@ body {
 .indicator__right {
   flex: 0 0 auto;
   width: 120px;
+}
+
+/* Groupe (écarts de taux) : trois valeurs côte à côte, chacune dans la couleur de sa courbe. */
+.group-cells {
+  display: flex;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+.group-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 44px;
+}
+
+.group-cell__top {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.group-cell__code {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--serie, var(--or));
+}
+
+.group-cell__value {
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--creme);
+}
+
+/* Vue détail d'un groupe : légende avec la dernière valeur de chaque courbe. */
+.detail__legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--creme-doux);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-item::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--serie, var(--or));
+  align-self: center;
+}
+
+.legend-item__value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--creme);
 }
 
 /* Mini-courbe d'un an, entre le nom et la valeur. */
@@ -468,6 +539,11 @@ body {
   stroke: var(--creme-doux);
   stroke-width: 1;
   stroke-dasharray: 2 3;
+}
+
+/* Plusieurs courbes (écarts de taux) : trait un peu plus fin, couleur propre à chaque courbe. */
+.chart__line--multi {
+  stroke-width: 1.6;
 }
 
 .chart__dot {

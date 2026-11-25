@@ -7,18 +7,19 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { formatCountdown, formatEventDate, upcomingEvents } from "./agenda";
-import { renderDetailChart, renderSparkline } from "./chart";
-import { exportIndicator } from "./export";
+import { COLORS, renderDetailChart, renderSparkline, type ChartSeries } from "./chart";
+import { exportGroup, exportIndicator } from "./export";
 import {
   IS_MAC,
   formatChange,
   formatDateLine,
   formatFullPeriod,
+  formatNumber,
   formatUpdate,
   formatValue,
 } from "./format";
 import { lang, locale, setLang, t } from "./i18n";
-import { displayFor } from "./indicators";
+import { displayFor, groupFor, type GroupDisplay } from "./indicators";
 import { setupTooltips } from "./tooltip";
 import type { DashboardView, IndicatorView, Observation } from "./types";
 
@@ -73,6 +74,60 @@ function renderRow(indicator: IndicatorView): HTMLLIElement | null {
   return row;
 }
 
+/** Membres d'un groupe présents dans les données, avec leur présentation. */
+function groupMembers(group: GroupDisplay, indicators: IndicatorView[]) {
+  return group.members.flatMap((member) => {
+    const indicator = indicators.find((i) => i.id === member.id);
+    const display = displayFor(member.id);
+    return indicator && display ? [{ member, indicator, display }] : [];
+  });
+}
+
+/** Valeur courte d'un écart, en points de base sans unité : « 147 ». */
+function shortBp(value: number | undefined): string {
+  return value === undefined ? "—" : formatNumber(value * 100, 0);
+}
+
+/** Variation courte sur 1 mois, en points de base : « +45 », « −3 », « = ». */
+function shortBpChange(indicator: IndicatorView): string {
+  if (!indicator.latest || !indicator.reference) return "";
+  const change = (indicator.latest.value - indicator.reference.value) * 100;
+  return Math.abs(change) < 0.5 ? "=" : formatNumber(change, 0, true);
+}
+
+/** Ligne d'un groupe (écarts de taux) : nom à gauche, une valeur par pays à droite. */
+function renderGroupRow(groupId: string, indicators: IndicatorView[]): HTMLLIElement | null {
+  const group = groupFor(groupId);
+  if (!group) return null;
+  const members = groupMembers(group, indicators);
+
+  const row = el("li", "indicator indicator--group");
+  row.dataset.id = groupId;
+
+  const dated = members.find((m) => m.indicator.latest);
+  const left = el("div", "indicator__left");
+  left.setAttribute("data-tooltip", group.hint);
+  left.append(
+    el("span", "indicator__label", group.short),
+    el("span", "indicator__sub", dated ? t().groupSub(formatDateLine(dated.indicator, dated.display)) : ""),
+  );
+
+  const cells = el("div", "group-cells");
+  for (const { member, indicator, display } of members) {
+    const cell = el("div", "group-cell");
+    cell.style.setProperty("--serie", member.color);
+    const value = indicator.latest ? formatValue(indicator.latest.value, display) : "—";
+    cell.setAttribute("data-tooltip", `${t().memberHint(display.label, value, formatChange(indicator, display))}. ${display.hint}`);
+    const top = el("span", "group-cell__top");
+    top.append(el("span", "group-cell__code", member.code), el("span", "group-cell__value", shortBp(indicator.latest?.value)));
+    cell.append(top, el("span", "indicator__sub", shortBpChange(indicator)));
+    cells.append(cell);
+  }
+
+  row.append(left, cells);
+  return row;
+}
+
 function renderStatus(view: DashboardView): void {
   const status = $("status");
   const refresh = $("refresh");
@@ -115,6 +170,7 @@ function render(view: DashboardView): void {
   if (list) {
     const rows: HTMLLIElement[] = [];
     let sectionShown = false;
+    const groupsShown = new Set<string>();
     for (const indicator of view.indicators) {
       // Intertitre avant le premier indicateur calculé par Glaux.
       if (indicator.derived && !sectionShown) {
@@ -122,6 +178,15 @@ function render(view: DashboardView): void {
         const section = el("li", "indicators__section", t().derivedSection);
         section.setAttribute("data-tooltip", t().derivedHint);
         rows.push(section);
+      }
+      // Groupe (écarts de taux) : une seule ligne, à la place de son premier membre.
+      if (indicator.group) {
+        if (groupsShown.has(indicator.group)) continue;
+        groupsShown.add(indicator.group);
+        const members = view.indicators.filter((i) => i.group === indicator.group);
+        const row = renderGroupRow(indicator.group, members);
+        if (row) rows.push(row);
+        continue;
       }
       const row = renderRow(indicator);
       if (row) rows.push(row);
@@ -182,8 +247,24 @@ function closeDetail(): void {
   $("indicators")?.removeAttribute("hidden");
 }
 
+/** Remplit un élément de la vue détail par son identifiant. */
+function setText(elementId: string, text: string): void {
+  const node = $(elementId);
+  if (node) node.textContent = text;
+}
+
+/** Période active (1 an / 5 ans) mise en évidence. */
+function renderPeriodButtons(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-months]").forEach((button) => {
+    button.classList.toggle("is-active", Number(button.dataset.months) === detailMonths);
+  });
+}
+
 async function renderDetail(): Promise<void> {
   const id = detailId;
+  const group = id ? groupFor(id) : undefined;
+  if (id && group) return renderGroupDetail(id, group);
+
   const indicator = dashboard?.indicators.find((i) => i.id === id);
   const display = id ? displayFor(id) : undefined;
   if (!id || !indicator || !display) {
@@ -191,18 +272,16 @@ async function renderDetail(): Promise<void> {
     return;
   }
 
-  const set = (elementId: string, text: string) => {
-    const node = $(elementId);
-    if (node) node.textContent = text;
-  };
+  // Vue d'un seul indicateur : valeur à droite, pas de légende.
+  $("detail-legend")?.setAttribute("hidden", "");
+  document.querySelector(".detail__right")?.removeAttribute("hidden");
+  const set = setText;
   set("detail-title", display.label);
   set("detail-date", formatDateLine(indicator, display));
   set("detail-value", indicator.latest ? formatValue(indicator.latest.value, display) : "—");
   set("detail-change", formatChange(indicator, display));
   set("detail-explain", display.explanation);
-  document.querySelectorAll<HTMLButtonElement>("[data-months]").forEach((button) => {
-    button.classList.toggle("is-active", Number(button.dataset.months) === detailMonths);
-  });
+  renderPeriodButtons();
 
   const months = detailMonths;
   const request = ++detailRequest;
@@ -226,29 +305,121 @@ async function renderDetail(): Promise<void> {
     : t().noHistory;
   readout.textContent = range;
 
-  const onHover = (point: Observation | null) => {
-    readout.textContent = point
-      ? t().readout(formatFullPeriod(point.date, display.monthly), formatValue(point.value, display))
-      : range;
+  const onHover = (date: string | null, hovered: (number | null)[]) => {
+    const value = hovered[0];
+    readout.textContent =
+      date && value !== null && value !== undefined
+        ? t().readout(formatFullPeriod(date, display.monthly), formatValue(value, display))
+        : range;
   };
   // La courbe prend toute la place libre du panneau.
   const width = chart.clientWidth || 364;
   const height = Math.max(150, chart.clientHeight || 150);
-  chart.replaceChildren(renderDetailChart(points, display, months, width, height, onHover));
+  const series: ChartSeries[] = [{ points, color: COLORS.or }];
+  chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover));
+}
+
+/** Historiques des membres d'un groupe, chacun dans sa couleur. */
+async function loadGroupSeries(group: GroupDisplay, months: number): Promise<ChartSeries[]> {
+  return Promise.all(
+    group.members.map(async (member) => {
+      let points: Observation[] = [];
+      try {
+        points = await loadHistory(member.id, months);
+      } catch (err) {
+        console.error("Historique indisponible :", err);
+      }
+      return { points, color: member.color };
+    }),
+  );
+}
+
+/** Vue détail d'un groupe (écarts de taux) : légende par pays et courbes superposées. */
+async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void> {
+  const members = groupMembers(group, dashboard?.indicators ?? []);
+  const first = members.find((m) => m.indicator.latest) ?? members[0];
+  if (!first) {
+    closeDetail();
+    return;
+  }
+  const display = first.display;
+
+  setText("detail-title", group.label);
+  setText("detail-date", `${t().monthlyAverages} · ${t().groupSub(formatDateLine(first.indicator, display))}`);
+  setText("detail-explain", group.explanation);
+  document.querySelector(".detail__right")?.setAttribute("hidden", "");
+  renderPeriodButtons();
+
+  // Légende : un pays par élément, dernière valeur et variation sur 1 mois.
+  const legend = $("detail-legend");
+  if (legend) {
+    legend.replaceChildren(
+      ...members.map(({ member, indicator, display: memberDisplay }) => {
+        const item = el("span", "legend-item");
+        item.style.setProperty("--serie", member.color);
+        item.setAttribute("data-tooltip", `${memberDisplay.label} · ${memberDisplay.hint}`);
+        const value = indicator.latest ? formatValue(indicator.latest.value, memberDisplay) : "—";
+        item.append(
+          el("span", "", member.code),
+          el("span", "legend-item__value", value),
+          el("span", "", shortBpChange(indicator)),
+        );
+        return item;
+      }),
+    );
+    legend.removeAttribute("hidden");
+  }
+
+  const months = detailMonths;
+  const request = ++detailRequest;
+  const series = await loadGroupSeries(group, months);
+  if (request !== detailRequest || detailId !== id) return;
+
+  const readout = $("detail-readout");
+  const chart = $("detail-chart");
+  if (!readout || !chart) return;
+  readout.textContent = t().hoverHint;
+
+  // Au survol : « oct. 2026 : FR 147 · IT 126 · ES 65 pb ».
+  const onHover = (date: string | null, hovered: (number | null)[]) => {
+    if (!date) {
+      readout.textContent = t().hoverHint;
+      return;
+    }
+    const parts = group.members
+      .map((member, k) => (hovered[k] === null || hovered[k] === undefined ? "" : `${member.code} ${shortBp(hovered[k] as number)}`))
+      .filter(Boolean)
+      .join(" · ");
+    readout.textContent = t().readout(formatFullPeriod(date, true), `${parts} ${t().bpUnit}`);
+  };
+  const width = chart.clientWidth || 364;
+  const height = Math.max(150, chart.clientHeight || 150);
+  chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover));
 }
 
 async function exportCurrent(): Promise<void> {
   const button = $("export");
   const id = detailId;
+  if (!button || !id || button.dataset.busy) return;
+  const group = groupFor(id);
   const indicator = dashboard?.indicators.find((i) => i.id === id);
-  const display = id ? displayFor(id) : undefined;
-  if (!button || !id || !indicator || !display || button.dataset.busy) return;
+  const display = displayFor(id);
+  if (!group && (!indicator || !display)) return;
 
   button.dataset.busy = "1";
   button.textContent = t().exporting;
   try {
-    const points = await loadHistory(id, detailMonths);
-    const path = await exportIndicator(indicator, display, points, detailMonths, dashboard?.agenda);
+    let path: string;
+    if (group) {
+      const members = groupMembers(group, dashboard?.indicators ?? []);
+      const series = await loadGroupSeries(group, detailMonths);
+      path = await exportGroup(id, group, members, series, detailMonths);
+    } else if (indicator && display) {
+      const points = await loadHistory(id, detailMonths);
+      path = await exportIndicator(indicator, display, points, detailMonths, dashboard?.agenda);
+    } else {
+      throw new Error("indicateur inconnu");
+    }
     button.textContent = t().exported;
     button.setAttribute("data-tooltip", path);
   } catch (err) {

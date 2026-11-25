@@ -8,6 +8,8 @@ export type IndicatorView = {
   id: string;
   /** Vrai pour un indicateur calculé par Glaux (taux réel, pente). */
   derived: boolean;
+  /** Groupe affiché sur une seule ligne (ex. « spreads » : écarts France, Italie, Espagne). */
+  group: string | null;
   latest: Observation | null;
   /** Valeur un mois plus tôt (base de la variation). */
   reference: Observation | null;
