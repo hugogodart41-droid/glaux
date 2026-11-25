@@ -35,6 +35,8 @@ export type DashboardView = {
   indicators: IndicatorView[];
   /** Lignes du panneau dans l'ordre choisi, masquées comprises. */
   rows: RowView[];
+  /** Pays affichés dans la ligne des écarts de taux (1 à 3, ex. « spread_fr »). */
+  spreads: string[];
   /** Dernière actualisation complète réussie (millisecondes). */
   updatedAt: number | null;
   refreshing: boolean;

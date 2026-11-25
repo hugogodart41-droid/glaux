@@ -25,13 +25,17 @@ cargo test -- --ignored --nocapture # téléchargement réel des 10 séries BCE 
 ## Données
 
 Source : API publique de la BCE (sans clé, sans compte). Les séries sont définies dans `src-tauri/src/ecb.rs` :
-les 6 indicateurs affichés, plus les taux à 10 ans de l'Allemagne, de la France, de l'Italie et de l'Espagne
-(jeu `IRS`, statistiques de convergence : moyennes mensuelles, publiées environ 3 semaines après la fin du mois).
+les 11 indicateurs BCE du panneau, plus les taux à 10 ans de 8 pays (Allemagne, France, Italie, Espagne, Grèce,
+Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes mensuelles, publiées environ
+3 semaines après la fin du mois).
+- Depuis la V3 : inflation sous-jacente et des services (jeu `HICP`), M3, crédit aux entreprises et aux ménages
+  (jeu `BSI`, croissance sur 1 an, publiée vers la fin du mois suivant). Masqués par défaut (`DEFAULT_HIDDEN`).
 
 Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en cache) :
 - taux réel = taux de dépôt − inflation ; pente = taux souverain 10 ans − €STR ;
-- écarts de taux avec l'Allemagne (France, Italie, Espagne), en points de base, affichés sur une seule ligne
-  (« groupe » `spreads` : `src/indicators.ts`) avec trois courbes superposées en vue détail et à l'export.
+- écarts de taux avec l'Allemagne (7 pays), en points de base, affichés sur une seule ligne (« groupe » `spreads` :
+  `src/indicators.ts`) pour 3 pays au plus, choisis par l'utilisateur (France, Italie, Espagne par défaut),
+  avec leurs courbes superposées en vue détail et à l'export. Couleur selon la place : or, crème, bleu gris.
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
@@ -51,7 +55,8 @@ Vue détail : choix du format (retenu d'une fois sur l'autre), « Copier » (⌘
 Icône « tableau » dans l'en-tête (à côté de ↻) : toutes les séries dans `Documents/Glaux/Glaux_donnees_{date}.xlsx`,
 construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_xlsxwriter`), sans réseau.
 - « Quotidien » : taux de dépôt (valeur en vigueur reportée sur chaque date), €STR, taux 10 ans, EUR/USD, pente (pb).
-- « Mensuel » : inflation, chômage, taux réel, taux 10 ans DE/FR/IT/ES, écarts avec l'Allemagne (pb).
+- « Mensuel » : inflation (totale, sous-jacente, services), chômage, M3, crédit, taux réel, taux 10 ans des 8 pays,
+  écarts avec l'Allemagne des 7 pays (pb), quel que soit l'affichage choisi dans le panneau.
 - « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
 Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
 
@@ -61,8 +66,11 @@ Icône « réglages » dans l'en-tête (ou ⌘,) : écran « Indicateurs affich�
 - Clic sur une ligne (ou Espace) : l'afficher ou la masquer. Le dernier indicateur affiché ne se masque pas.
 - Glisser une ligne (ou ↑ ↓ au clavier) : changer l'ordre, à l'intérieur de sa section. Les séries de la BCE
   restent avant les indicateurs calculés par Glaux, pour ne pas mélanger données officielles et calculs.
-- « Par défaut » : tout réafficher, dans l'ordre d'origine.
-- Enregistré dans `prefs.json` (`order`, `hidden`) par Rust (`store.rs`, `set_layout`). Une ligne ajoutée par
+- Lignes masquées par défaut (`DEFAULT_HIDDEN` dans `store.rs`) : prefs.json ne retient que l'écart avec
+  l'affichage par défaut (`hidden` : lignes habituelles masquées ; `shown` : lignes masquées par défaut affichées).
+- Écarts de taux : pastilles des pays sous la ligne (3 au plus, au moins 1) ; enregistrées dans `spreads`.
+- « Par défaut » (`reset_layout`) : ordre d'origine, lignes habituelles, pays par défaut des écarts.
+- Enregistré dans `prefs.json` (`order`, `hidden`, `shown`, `spreads`) par Rust (`store.rs`, `set_layout`, `set_spreads`). Une ligne ajoutée par
   une future version se place en fin de sa section ; un identifiant inconnu est ignoré.
 - Les alertes, l'agenda et l'export Excel ne dépendent pas de ce choix.
 

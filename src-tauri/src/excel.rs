@@ -99,7 +99,7 @@ const DAILY: [ColumnDef; 5] = [
     ),
 ];
 
-const MONTHLY: [ColumnDef; 10] = [
+const MONTHLY: [ColumnDef; 23] = [
     col(
         "hicp",
         "Inflation sur 1 an (%)",
@@ -108,9 +108,44 @@ const MONTHLY: [ColumnDef; 10] = [
         1,
     ),
     col(
+        "core_inflation",
+        "Inflation sous-jacente (%)",
+        "Core inflation (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation",
+        "Inflation des services (%)",
+        "Services inflation (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
         "unemployment",
         "Chômage (%)",
         "Unemployment (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "m3",
+        "M3, croissance sur 1 an (%)",
+        "M3, annual growth (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "loans_nfc",
+        "Crédit aux entreprises, croissance sur 1 an (%)",
+        "Loans to firms, annual growth (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "loans_hh",
+        "Crédit aux ménages, croissance sur 1 an (%)",
+        "Loans to households, annual growth (%)",
         Unit::Percent,
         1,
     ),
@@ -153,6 +188,34 @@ const MONTHLY: [ColumnDef; 10] = [
         Unit::Percent,
         3,
     ),
+    col(
+        "yield_gr",
+        "Taux 10 ans Grèce (%)",
+        "10-year yield, Greece (%)",
+        Unit::Percent,
+        3,
+    ),
+    col(
+        "yield_pt",
+        "Taux 10 ans Portugal (%)",
+        "10-year yield, Portugal (%)",
+        Unit::Percent,
+        3,
+    ),
+    col(
+        "yield_be",
+        "Taux 10 ans Belgique (%)",
+        "10-year yield, Belgium (%)",
+        Unit::Percent,
+        3,
+    ),
+    col(
+        "yield_nl",
+        "Taux 10 ans Pays-Bas (%)",
+        "10-year yield, Netherlands (%)",
+        Unit::Percent,
+        3,
+    ),
     calc(
         col(
             "spread_fr",
@@ -185,6 +248,50 @@ const MONTHLY: [ColumnDef; 10] = [
         ),
         "Taux 10 ans Espagne − taux 10 ans Allemagne, en points de base",
         "10-year yield Spain − Germany, in basis points",
+    ),
+    calc(
+        col(
+            "spread_gr",
+            "Écart Grèce − Allemagne (pb)",
+            "Spread Greece − Germany (bp)",
+            Unit::BasisPoints,
+            1,
+        ),
+        "Taux 10 ans Grèce − taux 10 ans Allemagne, en points de base",
+        "10-year yield Greece − Germany, in basis points",
+    ),
+    calc(
+        col(
+            "spread_pt",
+            "Écart Portugal − Allemagne (pb)",
+            "Spread Portugal − Germany (bp)",
+            Unit::BasisPoints,
+            1,
+        ),
+        "Taux 10 ans Portugal − taux 10 ans Allemagne, en points de base",
+        "10-year yield Portugal − Germany, in basis points",
+    ),
+    calc(
+        col(
+            "spread_be",
+            "Écart Belgique − Allemagne (pb)",
+            "Spread Belgium − Germany (bp)",
+            Unit::BasisPoints,
+            1,
+        ),
+        "Taux 10 ans Belgique − taux 10 ans Allemagne, en points de base",
+        "10-year yield Belgium − Germany, in basis points",
+    ),
+    calc(
+        col(
+            "spread_nl",
+            "Écart Pays-Bas − Allemagne (pb)",
+            "Spread Netherlands − Germany (bp)",
+            Unit::BasisPoints,
+            1,
+        ),
+        "Taux 10 ans Pays-Bas − taux 10 ans Allemagne, en points de base",
+        "10-year yield Netherlands − Germany, in basis points",
     ),
 ];
 
@@ -465,7 +572,8 @@ mod tests {
         let table = build_table(&MONTHLY, &data);
         assert_eq!(table.dates, vec![day("2026-09"), day("2026-10")]);
         assert_eq!(table.values[0], vec![Some(3.8), Some(4.0)]);
-        assert_eq!(table.values[7], vec![None, Some(147.4)]);
+        let fr = MONTHLY.iter().position(|c| c.id == "spread_fr").unwrap();
+        assert_eq!(table.values[fr], vec![None, Some(147.4)]);
     }
 
     #[test]

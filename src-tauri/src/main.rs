@@ -453,10 +453,26 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 }
 
 /// Ordre et visibilité des lignes du panneau (écran « Indicateurs affichés »).
-/// Listes vides : retour à la liste d'origine.
+/// `hidden` : toutes les lignes masquées à l'écran.
 #[tauri::command]
 fn set_layout(app: AppHandle, order: Vec<String>, hidden: Vec<String>) -> Result<(), String> {
     app.state::<Store>().set_layout(&order, &hidden)?;
+    notify(&app);
+    Ok(())
+}
+
+/// « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut des écarts de taux.
+#[tauri::command]
+fn reset_layout(app: AppHandle) -> Result<(), String> {
+    app.state::<Store>().reset_layout()?;
+    notify(&app);
+    Ok(())
+}
+
+/// Pays de la ligne des écarts de taux (1 à 3, ex. « spread_gr »).
+#[tauri::command]
+fn set_spreads(app: AppHandle, spreads: Vec<String>) -> Result<(), String> {
+    app.state::<Store>().set_spreads(&spreads)?;
     notify(&app);
     Ok(())
 }
@@ -576,6 +592,8 @@ fn main() {
             set_notifications,
             set_language,
             set_layout,
+            reset_layout,
+            set_spreads,
             resize_panel,
             install_update,
             quit_app

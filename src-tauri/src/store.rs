@@ -69,6 +69,10 @@ struct Prefs {
     order: Vec<String>,
     /// Lignes masquées par l'utilisateur.
     hidden: Vec<String>,
+    /// Lignes masquées par défaut (`DEFAULT_HIDDEN`) que l'utilisateur a affichées.
+    shown: Vec<String>,
+    /// Pays affichés dans la ligne des écarts de taux (ex. « spread_fr ») ; vide : `DEFAULT_SPREADS`.
+    spreads: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -79,6 +83,8 @@ impl Default for Prefs {
             language: None,
             order: Vec::new(),
             hidden: Vec::new(),
+            shown: Vec::new(),
+            spreads: Vec::new(),
         }
     }
 }
@@ -86,18 +92,58 @@ impl Default for Prefs {
 /// Nombre de rappels déjà envoyés gardés en mémoire (largement plus d'un an).
 const MAX_REMINDED: usize = 60;
 
-/// Indicateurs calculés par Glaux à partir des séries BCE (après les 6 séries, dans cet ordre).
+/// Indicateurs calculés par Glaux à partir des séries BCE (après les séries BCE, dans cet ordre).
 /// - « real_rate » : taux réel = taux de dépôt − inflation (mensuel) ;
 /// - « slope » : pente des taux = taux souverain 10 ans − €STR (quotidien) ;
-/// - « spread_fr / _it / _es » : écart de taux à 10 ans avec l'Allemagne (mensuel),
-///   affichés ensemble dans le panneau (groupe « spreads »).
-const DERIVED: [(&str, Frequency); 5] = [
+/// - « spread_xx » : écart de taux à 10 ans avec l'Allemagne (mensuel), affichés ensemble
+///   dans le panneau (groupe « spreads », 3 pays au choix parmi 7).
+const DERIVED: [(&str, Frequency); 9] = [
     ("real_rate", Frequency::Monthly),
     ("slope", Frequency::Daily),
     ("spread_fr", Frequency::Monthly),
     ("spread_it", Frequency::Monthly),
     ("spread_es", Frequency::Monthly),
+    ("spread_gr", Frequency::Monthly),
+    ("spread_pt", Frequency::Monthly),
+    ("spread_be", Frequency::Monthly),
+    ("spread_nl", Frequency::Monthly),
 ];
+
+/// Lignes ajoutées en V3, masquées tant que l'utilisateur ne les affiche pas
+/// (écran « Indicateurs affichés ») : le panneau garde sa taille habituelle.
+const DEFAULT_HIDDEN: [&str; 5] = [
+    "core_inflation",
+    "services_inflation",
+    "m3",
+    "loans_nfc",
+    "loans_hh",
+];
+
+/// Pays de la ligne des écarts de taux par défaut, et nombre maximal (place disponible).
+const DEFAULT_SPREADS: [&str; 3] = ["spread_fr", "spread_it", "spread_es"];
+pub const MAX_SPREADS: usize = 3;
+
+/// Tous les écarts de taux disponibles, dans l'ordre d'affichage.
+fn all_spreads() -> impl Iterator<Item = &'static str> {
+    DERIVED
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| group_of(id) == Some("spreads"))
+}
+
+/// Pays retenus pour la ligne des écarts : identifiants connus, sans doublon, dans l'ordre
+/// d'affichage, entre 1 et `MAX_SPREADS` ; sinon, le choix par défaut.
+fn arrange_spreads(chosen: &[String]) -> Vec<&'static str> {
+    let picked: Vec<&'static str> = all_spreads()
+        .filter(|id| chosen.iter().any(|c| c == id))
+        .take(MAX_SPREADS)
+        .collect();
+    if picked.is_empty() {
+        DEFAULT_SPREADS.to_vec()
+    } else {
+        picked
+    }
+}
 
 /// Groupe d'affichage d'un indicateur (plusieurs indicateurs sur une même ligne du panneau).
 fn group_of(id: &str) -> Option<&'static str> {
@@ -134,21 +180,26 @@ pub struct RowView {
 /// - identifiants inconnus ignorés (fichier modifié à la main, ligne retirée de Glaux) ;
 /// - lignes absentes du choix (nouvelles dans une version de Glaux) : à la fin de leur section ;
 /// - les séries BCE restent toujours avant les indicateurs calculés ;
-/// - jamais toutes masquées (sinon le panneau serait vide) : tout réapparaît.
-fn arrange_rows(order: &[String], hidden: &[String]) -> Vec<RowView> {
+/// - masquée : choisie comme telle (`hidden`), ou masquée par défaut et pas affichée (`shown`) ;
+/// - jamais toutes masquées (sinon le panneau serait vide) : retour à l'affichage par défaut.
+fn arrange_rows(order: &[String], hidden: &[String], shown: &[String]) -> Vec<RowView> {
+    let listed = |list: &[String], id: &str| list.iter().any(|item| item == id);
+    let is_hidden =
+        |id: &str| listed(hidden, id) || (DEFAULT_HIDDEN.contains(&id) && !listed(shown, id));
     let rank = |row: &str| order.iter().position(|id| id == row).unwrap_or(usize::MAX);
     let mut rows: Vec<RowView> = default_rows()
         .into_iter()
         .map(|id| RowView {
             id,
             derived: !SERIES.iter().any(|def| def.id == id),
-            hidden: hidden.iter().any(|h| h == id),
+            hidden: is_hidden(id),
         })
         .collect();
     // Tri stable : à rang égal (lignes absentes du choix), l'ordre par défaut est conservé.
     rows.sort_by_key(|row| (row.derived, rank(row.id)));
     if rows.iter().all(|row| row.hidden) {
-        rows.iter_mut().for_each(|row| row.hidden = false);
+        rows.iter_mut()
+            .for_each(|row| row.hidden = DEFAULT_HIDDEN.contains(&row.id));
     }
     rows
 }
@@ -201,6 +252,8 @@ pub struct DashboardView {
     pub error: Option<String>,
     /// Lignes du panneau, dans l'ordre choisi, avec celles masquées (écran « Indicateurs affichés »).
     pub rows: Vec<RowView>,
+    /// Écarts de taux affichés dans la ligne « spreads » (1 à 3 pays, ex. « spread_fr »).
+    pub spreads: Vec<&'static str>,
     /// Prochaines décisions BCE et inflations flash.
     pub agenda: AgendaView,
     /// Notifications activées.
@@ -383,19 +436,21 @@ impl Store {
     /// Lignes du panneau : ordre et visibilité choisis par l'utilisateur.
     pub fn rows(&self) -> Vec<RowView> {
         match self.prefs.lock() {
-            Ok(prefs) => arrange_rows(&prefs.order, &prefs.hidden),
-            Err(_) => arrange_rows(&[], &[]),
+            Ok(prefs) => arrange_rows(&prefs.order, &prefs.hidden, &prefs.shown),
+            Err(_) => arrange_rows(&[], &[], &[]),
         }
     }
 
     /// Enregistre l'ordre des lignes et celles masquées (prefs.json).
-    /// Listes vides : retour à la liste d'origine. Refuse de tout masquer.
+    /// `hidden` : toutes les lignes masquées à l'écran. Refuse de tout masquer.
     pub fn set_layout(&self, order: &[String], hidden: &[String]) -> Result<(), String> {
         let defaults = default_rows();
         if defaults.iter().all(|id| hidden.iter().any(|h| h == id)) {
             return Err("au moins un indicateur doit rester affiché".into());
         }
-        let rows = arrange_rows(order, hidden);
+        // Tout ce qui n'est pas dans `hidden` est affiché, lignes masquées par défaut comprises.
+        let shown: Vec<String> = DEFAULT_HIDDEN.iter().map(|id| id.to_string()).collect();
+        let rows = arrange_rows(order, hidden, &shown);
         let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
         // Ordre d'origine : rien d'enregistré, pour qu'une ligne ajoutée par une future
         // version de Glaux prenne sa place prévue.
@@ -405,10 +460,52 @@ impl Store {
         } else {
             rows.iter().map(|row| row.id.to_string()).collect()
         };
+        // Écart avec l'affichage par défaut seulement : masquées d'habitude affichées (`shown`),
+        // affichées d'habitude masquées (`hidden`).
         prefs.hidden = rows
             .iter()
-            .filter(|row| row.hidden)
+            .filter(|row| row.hidden && !DEFAULT_HIDDEN.contains(&row.id))
             .map(|row| row.id.to_string())
+            .collect();
+        prefs.shown = rows
+            .iter()
+            .filter(|row| !row.hidden && DEFAULT_HIDDEN.contains(&row.id))
+            .map(|row| row.id.to_string())
+            .collect();
+        self.save_prefs(&prefs)
+    }
+
+    /// « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut des écarts.
+    pub fn reset_layout(&self) -> Result<(), String> {
+        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
+        prefs.order.clear();
+        prefs.hidden.clear();
+        prefs.shown.clear();
+        prefs.spreads.clear();
+        self.save_prefs(&prefs)
+    }
+
+    /// Écarts de taux affichés dans la ligne « spreads ».
+    pub fn spreads(&self) -> Vec<&'static str> {
+        match self.prefs.lock() {
+            Ok(prefs) => arrange_spreads(&prefs.spreads),
+            Err(_) => DEFAULT_SPREADS.to_vec(),
+        }
+    }
+
+    /// Choisit les pays de la ligne des écarts (1 à `MAX_SPREADS`, identifiants connus).
+    pub fn set_spreads(&self, chosen: &[String]) -> Result<(), String> {
+        let known = chosen
+            .iter()
+            .filter(|id| all_spreads().any(|s| s == id.as_str()))
+            .count();
+        if known == 0 || known > MAX_SPREADS {
+            return Err(format!("choisir entre 1 et {MAX_SPREADS} pays"));
+        }
+        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
+        prefs.spreads = arrange_spreads(chosen)
+            .into_iter()
+            .map(str::to_string)
             .collect();
         self.save_prefs(&prefs)
     }
@@ -500,7 +597,7 @@ impl Store {
         self.cache.lock().ok().and_then(|c| c.last_success)
     }
 
-    /// Construit la vue envoyée à l'interface : les 6 séries BCE affichées, puis les indicateurs calculés.
+    /// Construit la vue envoyée à l'interface : les séries BCE du panneau, puis les indicateurs calculés.
     pub fn view(&self, today: NaiveDate) -> DashboardView {
         let cache = self.cache.lock().ok();
         let empty = CacheFile::default();
@@ -530,6 +627,7 @@ impl Store {
             refreshing: self.refreshing.load(Ordering::SeqCst),
             error: self.last_error.lock().ok().and_then(|e| e.clone()),
             rows: self.rows(),
+            spreads: self.spreads(),
             agenda: agenda_view(today),
             notifications: self.notifications_enabled(),
             notification_error: None,
@@ -572,6 +670,10 @@ fn series_data<'a>(
         "spread_fr" => spread(cached(cache, "yield_fr"), cached(cache, "yield_de")),
         "spread_it" => spread(cached(cache, "yield_it"), cached(cache, "yield_de")),
         "spread_es" => spread(cached(cache, "yield_es"), cached(cache, "yield_de")),
+        "spread_gr" => spread(cached(cache, "yield_gr"), cached(cache, "yield_de")),
+        "spread_pt" => spread(cached(cache, "yield_pt"), cached(cache, "yield_de")),
+        "spread_be" => spread(cached(cache, "yield_be"), cached(cache, "yield_de")),
+        "spread_nl" => spread(cached(cache, "yield_nl"), cached(cache, "yield_de")),
         _ => return None,
     };
     Some((Cow::Owned(observations), *frequency, false))
@@ -638,6 +740,7 @@ mod tests {
                 series("yield_de", &[("2026-09", 3.473), ("2026-10", 3.416)]),
                 series("yield_fr", &[("2026-09", 4.44), ("2026-10", 4.89)]),
                 series("yield_it", &[("2026-09", 4.362), ("2026-10", 4.68)]),
+                series("yield_gr", &[("2026-10", 4.41)]),
             ],
         };
         let (fr, frequency, _) = series_data(&cache, "spread_fr").unwrap();
@@ -647,7 +750,9 @@ mod tests {
         assert_eq!(fr[1].value, 1.474); // 147 pb en octobre 2026
         let (it, _, _) = series_data(&cache, "spread_it").unwrap();
         assert_eq!(it.last().unwrap().value, 1.264);
-        // Espagne absente du cache : pas de valeur, pas de plantage.
+        let (gr, _, _) = series_data(&cache, "spread_gr").unwrap();
+        assert_eq!(gr.last().unwrap().value, 0.994); // Grèce : 99 pb, moins que la France
+                                                     // Espagne absente du cache : pas de valeur, pas de plantage.
         assert!(series_data(&cache, "spread_es").unwrap().0.is_empty());
 
         assert_eq!(group_of("spread_fr"), Some("spreads"));
@@ -666,7 +771,10 @@ mod tests {
         }
         let view = store.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
         // Les taux par pays servent au calcul mais ne sont pas des lignes du panneau.
-        let country_yields = ["yield_de", "yield_fr", "yield_it", "yield_es"];
+        let country_yields = [
+            "yield_de", "yield_fr", "yield_it", "yield_es", "yield_gr", "yield_pt", "yield_be",
+            "yield_nl",
+        ];
         assert!(view
             .indicators
             .iter()
@@ -762,6 +870,29 @@ mod tests {
             [
                 "deposit_rate",
                 "hicp",
+                "core_inflation",
+                "services_inflation",
+                "estr",
+                "yield_10y",
+                "eurusd",
+                "unemployment",
+                "m3",
+                "loans_nfc",
+                "loans_hh",
+                "real_rate",
+                "slope",
+                "spreads"
+            ]
+        );
+        let rows = arrange_rows(&[], &[], &[]);
+        assert_eq!(ids(&rows), default_rows());
+        // Affichées par défaut : les 9 lignes de la v0.2 ; les 5 nouvelles sont masquées.
+        let visible: Vec<_> = rows.iter().filter(|r| !r.hidden).map(|r| r.id).collect();
+        assert_eq!(
+            visible,
+            [
+                "deposit_rate",
+                "hicp",
                 "estr",
                 "yield_10y",
                 "eurusd",
@@ -771,10 +902,7 @@ mod tests {
                 "spreads"
             ]
         );
-        let rows = arrange_rows(&[], &[]);
-        assert_eq!(ids(&rows), default_rows());
-        assert!(rows.iter().all(|row| !row.hidden));
-        assert!(!rows[0].derived && rows[8].derived); // taux de dépôt : BCE ; écarts : calculés
+        assert!(!rows[0].derived && rows[13].derived); // taux de dépôt : BCE ; écarts : calculés
     }
 
     #[test]
@@ -782,19 +910,24 @@ mod tests {
         // L'utilisateur met les écarts en tête et l'inflation avant le taux de dépôt ;
         // « estr » et d'autres manquent (version plus ancienne), « inconnu » n'existe pas.
         let order = strings(&["spreads", "inconnu", "hicp", "deposit_rate", "slope"]);
-        let rows = arrange_rows(&order, &[]);
+        let rows = arrange_rows(&order, &[], &[]);
         assert_eq!(
             ids(&rows),
             [
                 "hicp",
                 "deposit_rate",
+                "core_inflation", // absentes du choix : en fin de section, ordre par défaut
+                "services_inflation",
                 "estr",
                 "yield_10y",
                 "eurusd",
                 "unemployment",
+                "m3",
+                "loans_nfc",
+                "loans_hh",
                 "spreads", // les calculés restent après les séries BCE
                 "slope",
-                "real_rate" // absent du choix : en fin de section
+                "real_rate"
             ]
         );
     }
@@ -802,7 +935,9 @@ mod tests {
     #[test]
     fn jamais_toutes_les_lignes_masquees() {
         let all = strings(&default_rows());
-        assert!(arrange_rows(&[], &all).iter().all(|row| !row.hidden));
+        // Tout masqué (fichier abîmé) : retour à l'affichage par défaut.
+        let rows = arrange_rows(&[], &all, &[]);
+        assert_eq!(rows.iter().filter(|row| !row.hidden).count(), 9);
         let dir = temp_dir("tout-masque");
         let store = Store::load(dir.clone(), Lang::Fr);
         assert!(store.set_layout(&[], &all).is_err());
@@ -822,17 +957,86 @@ mod tests {
         let reopened = Store::load(dir.clone(), Lang::Fr);
         let rows = reopened.rows();
         assert_eq!(&ids(&rows)[..2], ["eurusd", "deposit_rate"]);
-        assert_eq!(rows[6].id, "spreads");
+        assert_eq!(rows[11].id, "spreads");
+        // Masquées : celles choisies ; les 5 nouvelles sont affichées (absentes de `hidden`).
         let hidden: Vec<_> = rows.iter().filter(|r| r.hidden).map(|r| r.id).collect();
         assert_eq!(hidden, ["unemployment", "slope"]);
         let view = reopened.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
         assert_eq!(view.rows, rows);
 
-        // « Par défaut » : rien d'enregistré, ordre d'origine.
-        reopened.set_layout(&[], &[]).unwrap();
-        assert_eq!(ids(&reopened.rows()), default_rows());
+        // « Par défaut » : rien d'enregistré, ordre d'origine, nouvelles lignes de nouveau masquées.
+        reopened.reset_layout().unwrap();
+        let rows = reopened.rows();
+        assert_eq!(ids(&rows), default_rows());
+        assert_eq!(
+            rows.iter().filter(|r| r.hidden).count(),
+            DEFAULT_HIDDEN.len()
+        );
         let prefs = fs::read_to_string(dir.join("prefs.json")).unwrap();
         assert!(prefs.contains("\"order\": []"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ligne_masquee_par_defaut_affichee_puis_retenue() {
+        let dir = temp_dir("masquees-par-defaut");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        let hidden_now: Vec<String> = store
+            .rows()
+            .iter()
+            .filter(|r| r.hidden && r.id != "core_inflation")
+            .map(|r| r.id.to_string())
+            .collect();
+        let order: Vec<String> = store.rows().iter().map(|r| r.id.to_string()).collect();
+        store.set_layout(&order, &hidden_now).unwrap();
+
+        let rows = Store::load(dir.clone(), Lang::Fr).rows();
+        let core = rows.iter().find(|r| r.id == "core_inflation").unwrap();
+        assert!(!core.hidden); // affichée par l'utilisateur, même après redémarrage
+        assert!(rows.iter().find(|r| r.id == "m3").unwrap().hidden); // les autres restent masquées
+        let prefs = fs::read_to_string(dir.join("prefs.json")).unwrap();
+        assert!(prefs.contains("core_inflation") && prefs.contains("\"order\": []"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pays_des_ecarts_de_taux() {
+        assert_eq!(arrange_spreads(&[]), DEFAULT_SPREADS);
+        // Ordre d'affichage, sans doublon ni inconnu, 3 au plus.
+        let chosen = strings(&[
+            "spread_nl",
+            "spread_gr",
+            "spread_gr",
+            "spread_xx",
+            "spread_fr",
+        ]);
+        assert_eq!(
+            arrange_spreads(&chosen),
+            ["spread_fr", "spread_gr", "spread_nl"]
+        );
+        assert_eq!(all_spreads().count(), 7);
+
+        let dir = temp_dir("pays");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        assert_eq!(store.spreads(), DEFAULT_SPREADS);
+        store
+            .set_spreads(&strings(&["spread_gr", "spread_pt"]))
+            .unwrap();
+        assert_eq!(
+            Store::load(dir.clone(), Lang::Fr).spreads(),
+            ["spread_gr", "spread_pt"]
+        );
+        assert!(store.set_spreads(&[]).is_err());
+        assert!(store
+            .set_spreads(&strings(&[
+                "spread_fr",
+                "spread_it",
+                "spread_es",
+                "spread_gr"
+            ]))
+            .is_err());
+        store.reset_layout().unwrap();
+        assert_eq!(store.spreads(), DEFAULT_SPREADS);
         let _ = fs::remove_dir_all(dir);
     }
 

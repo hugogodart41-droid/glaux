@@ -654,7 +654,7 @@ body {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 8px 18px;
+  padding: 7px 18px;
   border-bottom: 1px solid var(--ligne);
   background: var(--nuit);
   cursor: grab;
@@ -693,8 +693,16 @@ body {
   color: var(--or);
 }
 
-.custom-item__label {
+/* Nom (et, pour les écarts de taux, pastilles des pays) entre la poignée et l'interrupteur. */
+.custom-item__body {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-item__label {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -752,4 +760,46 @@ body {
 .switch:focus-visible {
   outline: 1px solid var(--or);
   outline-offset: 2px;
+}
+
+/* Pastilles des pays (ligne des écarts de taux) : choisis = couleur de leur courbe. */
+.country-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  padding: 3px 6px;
+  color: var(--creme-doux);
+  background: none;
+  border: 1px solid var(--ligne);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chip:hover,
+.chip:focus-visible {
+  border-color: var(--creme-doux);
+  outline: none;
+}
+
+.chip[aria-pressed="true"] {
+  color: var(--serie, var(--or));
+  border-color: var(--serie, var(--or));
+  background: var(--nuit-clair);
+}
+
+/* 3 pays déjà choisis, ou dernier pays : non cliquable. */
+.chip[aria-disabled="true"] {
+  cursor: default;
+}
+
+.chip[aria-pressed="false"][aria-disabled="true"] {
+  opacity: 0.4;
 }

@@ -31,9 +31,10 @@ impl SeriesDef {
     }
 }
 
-/// Séries téléchargées : les 6 indicateurs affichés (dans l'ordre du panneau), puis les taux
-/// à 10 ans par pays, qui servent aux écarts de taux (calculés dans store.rs).
-pub const SERIES: [SeriesDef; 10] = [
+/// Séries téléchargées : les 11 indicateurs du panneau (dans leur ordre par défaut ; 5 sont
+/// masqués tant que l'utilisateur ne les affiche pas, voir `DEFAULT_HIDDEN` dans store.rs),
+/// puis les taux à 10 ans par pays, qui servent aux écarts de taux (calculés dans store.rs).
+pub const SERIES: [SeriesDef; 19] = [
     // Taux de la facilité de dépôt : le taux directeur de référence de la BCE.
     SeriesDef {
         id: "deposit_rate",
@@ -48,6 +49,24 @@ pub const SERIES: [SeriesDef; 10] = [
         id: "hicp",
         flow: "HICP",
         key: "M.U2.N.000000.4D0.ANR",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Inflation sous-jacente : IPCH hors énergie, alimentation, alcool et tabac, glissement annuel.
+    SeriesDef {
+        id: "core_inflation",
+        flow: "HICP",
+        key: "M.U2.N.XEF000.4D0.ANR",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Inflation des services, glissement annuel.
+    SeriesDef {
+        id: "services_inflation",
+        flow: "HICP",
+        key: "M.U2.N.SERV00.4D0.ANR",
         frequency: Frequency::Monthly,
         step: false,
         shown: true,
@@ -88,6 +107,34 @@ pub const SERIES: [SeriesDef; 10] = [
         step: false,
         shown: true,
     },
+    // Masse monétaire M3 : croissance sur 1 an (bilans des banques, publiée vers le 28 du mois suivant).
+    SeriesDef {
+        id: "m3",
+        flow: "BSI",
+        key: "M.U2.Y.V.M30.X.I.U2.2300.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Prêts des banques aux entreprises non financières, croissance sur 1 an
+    // (corrigée des cessions et titrisations de prêts).
+    SeriesDef {
+        id: "loans_nfc",
+        flow: "BSI",
+        key: "M.U2.Y.U.A20T.A.I.U2.2240.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Prêts des banques aux ménages, croissance sur 1 an (même correction).
+    SeriesDef {
+        id: "loans_hh",
+        flow: "BSI",
+        key: "M.U2.Y.U.A20T.A.I.U2.2250.Z01.A",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
     // Taux d'emprunt à 10 ans par pays : statistiques de convergence (critères de Maastricht),
     // moyennes mensuelles publiées par la BCE, environ 3 semaines après la fin du mois.
     SeriesDef {
@@ -118,6 +165,38 @@ pub const SERIES: [SeriesDef; 10] = [
         id: "yield_es",
         flow: "IRS",
         key: "M.ES.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_gr",
+        flow: "IRS",
+        key: "M.GR.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_pt",
+        flow: "IRS",
+        key: "M.PT.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_be",
+        flow: "IRS",
+        key: "M.BE.L.L40.CI.0000.EUR.N.Z",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: false,
+    },
+    SeriesDef {
+        id: "yield_nl",
+        flow: "IRS",
+        key: "M.NL.L.L40.CI.0000.EUR.N.Z",
         frequency: Frequency::Monthly,
         step: false,
         shown: false,
@@ -274,7 +353,7 @@ mod tests {
     /// Lancer depuis src-tauri :  cargo test -- --ignored --nocapture
     #[test]
     #[ignore]
-    fn telecharge_les_6_series_depuis_la_bce() {
+    fn telecharge_toutes_les_series_depuis_la_bce() {
         let agent = new_agent();
         let start = chrono::Local::now().date_naive() - chrono::Months::new(3);
         let mut failures = Vec::new();

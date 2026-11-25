@@ -29,7 +29,7 @@ import {
   formatValue,
 } from "./format";
 import { lang, locale, setLang, t } from "./i18n";
-import { displayFor, groupFor, type GroupDisplay } from "./indicators";
+import { displayFor, groupCandidates, groupFor, setGroupSelection, type GroupDisplay } from "./indicators";
 import { setupTooltips } from "./tooltip";
 import type { DashboardView, IndicatorView, Observation, RowView } from "./types";
 
@@ -234,8 +234,10 @@ function renderList(view: DashboardView): void {
 
 function render(incoming: DashboardView): void {
   // Choix d'affichage en cours d'enregistrement : on garde celui de l'écran (déjà à jour).
-  const view = layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows } : incoming;
+  const view =
+    layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows, spreads: dashboard.spreads } : incoming;
   dashboard = view;
+  setGroupSelection("spreads", view.spreads);
   // Langue choisie dans Rust (système ou préférence) : textes fixes remis à jour si elle change.
   if (setLang(view.language)) applyStaticTexts();
   // Nouvelles données : les historiques en mémoire sont périmés.
@@ -420,11 +422,12 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
       ...members.map(({ member, indicator, display: memberDisplay }) => {
         const item = el("span", "legend-item");
         item.style.setProperty("--serie", member.color);
-        item.setAttribute("data-tooltip", `${memberDisplay.label} · ${memberDisplay.hint}`);
         const value = indicator.latest ? formatValue(indicator.latest.value, memberDisplay) : "—";
+        item.setAttribute("data-tooltip", `${t().memberHint(memberDisplay.label, value, formatChange(indicator, memberDisplay))}. ${memberDisplay.hint}`);
+        // Sans l'unité (déjà dans le sous-titre « en pb ») : 3 pays tiennent sur une ligne.
         item.append(
           el("span", "", member.code),
-          el("span", "legend-item__value", value),
+          el("span", "legend-item__value", shortBp(indicator.latest?.value)),
           el("span", "", shortBpChange(indicator)),
         );
         return item;
@@ -567,10 +570,17 @@ function renderCustomize(): void {
     list.append(...items.map((row) => renderCustomItem(row, lastVisible)));
     return [el("div", "indicators__section", title), list];
   });
-  // Les lignes sont recréées : le clavier reste sur la même ligne (↑ ↓, Espace).
-  const focused = (document.activeElement as Element | null)?.closest<HTMLElement>(".custom-item")?.dataset.id;
+  // Les lignes sont recréées : le clavier reste au même endroit (ligne ou pastille de pays).
+  const active = document.activeElement as HTMLElement | null;
+  const chip = active?.dataset.spread;
+  const focused = active?.closest<HTMLElement>(".custom-item")?.dataset.id;
   container.replaceChildren(...nodes);
-  if (focused) container.querySelector<HTMLElement>(`.custom-item[data-id="${focused}"] .switch`)?.focus();
+  const target = chip
+    ? container.querySelector<HTMLElement>(`.chip[data-spread="${chip}"]`)
+    : focused
+      ? container.querySelector<HTMLElement>(`.custom-item[data-id="${focused}"] .switch`)
+      : null;
+  target?.focus();
 }
 
 function renderCustomItem(row: RowView, lastVisible: boolean): HTMLLIElement {
@@ -594,8 +604,61 @@ function renderCustomItem(row: RowView, lastVisible: boolean): HTMLLIElement {
     toggle.setAttribute("data-tooltip", strings.keepOne);
   }
 
-  item.append(grip, el("span", "custom-item__label", label), toggle);
+  const body = el("div", "custom-item__body");
+  body.append(el("span", "custom-item__label", label));
+  if (row.id === "spreads") body.append(renderCountryChips());
+  item.append(grip, body, toggle);
   return item;
+}
+
+/** Écarts de taux maximum sur la ligne du panneau (place disponible ; même limite dans Rust). */
+const MAX_SPREADS = 3;
+
+/** Pastilles des pays de la ligne des écarts : 3 au plus, au moins 1, dans la couleur de leur courbe. */
+function renderCountryChips(): HTMLElement {
+  const strings = t();
+  const chosen = dashboard?.spreads ?? [];
+  const colors = new Map((groupFor("spreads")?.members ?? []).map((m) => [m.id, m.color]));
+  const chips = el("div", "country-chips");
+  chips.setAttribute("role", "group");
+  chips.setAttribute("aria-label", strings.countriesAria);
+  for (const candidate of groupCandidates("spreads")) {
+    const on = chosen.includes(candidate.id);
+    const chip = el("button", "chip", candidate.code);
+    chip.type = "button";
+    chip.dataset.spread = candidate.id;
+    chip.setAttribute("aria-pressed", String(on));
+    const color = colors.get(candidate.id);
+    if (on && color) chip.style.setProperty("--serie", color);
+    const full = !on && chosen.length >= MAX_SPREADS;
+    const last = on && chosen.length <= 1;
+    if (full || last) chip.setAttribute("aria-disabled", "true");
+    const name = displayFor(candidate.id)?.label ?? candidate.code;
+    chip.setAttribute("data-tooltip", full ? strings.countriesFull : last ? strings.countriesOne : name);
+    chips.append(chip);
+  }
+  return chips;
+}
+
+/** Ajoute ou retire un pays de la ligne des écarts (Rust l'enregistre dans prefs.json). */
+function toggleSpread(id: string): void {
+  if (!dashboard) return;
+  const current = dashboard.spreads;
+  const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+  if (next.length === 0 || next.length > MAX_SPREADS) return;
+  const ordered = groupCandidates("spreads")
+    .map((candidate) => candidate.id)
+    .filter((x) => next.includes(x));
+  dashboard = { ...dashboard, spreads: ordered };
+  setGroupSelection("spreads", ordered);
+  renderCustomize();
+  renderList(dashboard);
+  layoutSaves += 1;
+  invoke("set_spreads", { spreads: ordered })
+    .catch((err) => console.error("Choix des pays non enregistré :", err))
+    .finally(() => {
+      layoutSaves -= 1;
+    });
 }
 
 /**
@@ -697,7 +760,7 @@ function setupCustomize(): void {
   root.addEventListener("pointerdown", (event) => {
     const target = event.target as Element | null;
     const item = target?.closest<HTMLElement>(".custom-item");
-    if (event.button !== 0 || !item || target?.closest(".switch")) return;
+    if (event.button !== 0 || !item || target?.closest(".switch, .chip")) return;
     ignoreClick = false;
     drag = { item, pointerId: event.pointerId, startY: event.clientY, lastY: event.clientY, shift: 0, moved: false };
     item.setPointerCapture(event.pointerId);
@@ -736,6 +799,12 @@ function setupCustomize(): void {
       return;
     }
     const target = event.target as Element | null;
+    const chip = target?.closest<HTMLElement>(".chip");
+    if (chip?.dataset.spread) {
+      if (chip.getAttribute("aria-disabled") !== "true") toggleSpread(chip.dataset.spread);
+      return;
+    }
+    if (target?.closest(".country-chips")) return; // entre deux pastilles : rien
     const item = target?.closest<HTMLElement>(".custom-item");
     if (!item?.dataset.id) return;
     if (item.querySelector(".switch")?.getAttribute("aria-disabled") === "true") return;
@@ -745,18 +814,18 @@ function setupCustomize(): void {
 
   root.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    const item = (event.target as Element | null)?.closest<HTMLElement>(".custom-item");
+    const source = event.target as Element | null;
+    if (!source?.closest(".switch")) return;
+    const item = source.closest<HTMLElement>(".custom-item");
     if (!item?.dataset.id) return;
     event.preventDefault();
     moveRow(item.dataset.id, event.key === "ArrowUp" ? -1 : 1);
   });
 
   $("customize-back")?.addEventListener("click", closeCustomize);
-  // « Par défaut » : listes vides = ordre d'origine, tout affiché (Rust renvoie la vue).
+  // « Par défaut » : ordre d'origine, lignes habituelles, pays par défaut (Rust renvoie la vue).
   $("customize-reset")?.addEventListener("click", () => {
-    invoke("set_layout", { order: [], hidden: [] }).catch((err) =>
-      console.error("Retour à la liste d'origine impossible :", err),
-    );
+    invoke("reset_layout").catch((err) => console.error("Retour à la liste d'origine impossible :", err));
   });
 }
 

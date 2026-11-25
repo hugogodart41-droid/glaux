@@ -1,7 +1,7 @@
 # Glaux
 
 **Euro area macro dashboard in your menu bar (Mac) or system tray (Windows).**
-ECB deposit rate, inflation, €STR, 10-year sovereign yield, EUR/USD and unemployment, plus a real rate, a yield-curve slope and 10-year spreads against Germany (France, Italy, Spain) computed by Glaux. In English and French.
+ECB deposit rate, inflation (headline, core, services), €STR, 10-year sovereign yield, EUR/USD, unemployment, M3 and bank lending, plus a real rate, a yield-curve slope and 10-year spreads against Germany computed by Glaux. In English and French.
 
 Data comes straight from the European Central Bank's official API. No account, no tracking.
 
@@ -9,8 +9,8 @@ Data comes straight from the European Central Bank's official API. No account, n
 
 ## Features
 
-- 8 indicators: latest value, change over 1 month and a 1-year mini chart
-- 10-year spreads against Germany for France, Italy and Spain, on one row and one chart
+- 13 indicators to choose from: latest value, change over 1 month and a 1-year mini chart
+- 10-year spreads against Germany for up to three countries of your choice (France, Italy, Spain, Greece, Portugal, Belgium, Netherlands), on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
 - Image export in three formats: portrait 1080 × 1350 (LinkedIn, Instagram), landscape 1200 × 675 (LinkedIn, X) and story 1080 × 1920 (TikTok, Reels), saved as PNG or copied to paste straight into a post
 - Excel export of all historical series (daily and monthly sheets, sources), in one click

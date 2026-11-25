@@ -31,6 +31,12 @@ const FORMATS: Record<string, Format> = {
   yield_10y: { kind: "rate", decimals: 2, monthly: false },
   eurusd: { kind: "fx", decimals: 4, monthly: false },
   unemployment: { kind: "rate", decimals: 1, monthly: true },
+  // V3 : masqués par défaut (à afficher dans « Indicateurs affichés »).
+  core_inflation: { kind: "rate", decimals: 1, monthly: true },
+  services_inflation: { kind: "rate", decimals: 1, monthly: true },
+  m3: { kind: "rate", decimals: 1, monthly: true },
+  loans_nfc: { kind: "rate", decimals: 1, monthly: true },
+  loans_hh: { kind: "rate", decimals: 1, monthly: true },
   // Calculés par Glaux (src-tauri/src/data.rs)
   real_rate: { kind: "rate", decimals: 2, monthly: true },
   slope: { kind: "bp", decimals: 2, monthly: false },
@@ -38,6 +44,10 @@ const FORMATS: Record<string, Format> = {
   spread_fr: { kind: "bp", decimals: 2, monthly: true },
   spread_it: { kind: "bp", decimals: 2, monthly: true },
   spread_es: { kind: "bp", decimals: 2, monthly: true },
+  spread_gr: { kind: "bp", decimals: 2, monthly: true },
+  spread_pt: { kind: "bp", decimals: 2, monthly: true },
+  spread_be: { kind: "bp", decimals: 2, monthly: true },
+  spread_nl: { kind: "bp", decimals: 2, monthly: true },
 };
 
 const TEXTS: Record<Lang, Record<string, Texts>> = {
@@ -78,6 +88,36 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation:
         "Part des actifs sans emploi. Un chômage bas signale un marché du travail tendu, qui peut pousser les salaires, puis les prix, à la hausse.",
     },
+    core_inflation: {
+      label: "Inflation sous-jacente",
+      hint: "IPCH hors énergie, alimentation, alcool et tabac, zone euro, glissement annuel.",
+      explanation:
+        "La tendance de fond des prix, sans les éléments les plus volatils. La BCE la suit de près pour juger si l'inflation revient durablement vers 2 %.",
+    },
+    services_inflation: {
+      label: "Inflation des services",
+      hint: "IPCH des services (loyers, transports, restauration…), zone euro, glissement annuel.",
+      explanation:
+        "Très liée aux salaires, elle ne baisse que lentement. Tant qu'elle reste élevée, la BCE hésite à baisser ses taux.",
+    },
+    m3: {
+      label: "Masse monétaire M3",
+      hint: "Croissance sur 1 an de M3 : billets, dépôts et placements à court terme, zone euro.",
+      explanation:
+        "La quantité de monnaie au sens large. Une croissance rapide peut annoncer de l'inflation ; une croissance faible, un crédit qui ralentit.",
+    },
+    loans_nfc: {
+      label: "Crédit aux entreprises",
+      hint: "Prêts des banques aux entreprises de la zone euro, croissance sur 1 an (corrigée des cessions et titrisations).",
+      explanation:
+        "Montre si les décisions de la BCE se transmettent à l'économie : quand les taux montent, le crédit ralentit, puis l'investissement.",
+    },
+    loans_hh: {
+      label: "Crédit aux ménages",
+      hint: "Prêts des banques aux ménages de la zone euro, surtout immobiliers, croissance sur 1 an (corrigée des cessions et titrisations).",
+      explanation:
+        "Reflète d'abord le marché immobilier, qui réagit vite aux taux des crédits : un bon thermomètre de la politique monétaire.",
+    },
     real_rate: {
       label: "Taux réel",
       hint: "Taux de dépôt de la BCE moins l'inflation sur 1 an : le coût de l'argent une fois l'inflation déduite.",
@@ -97,6 +137,26 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
     spread_es: {
       label: "Espagne",
       hint: "Bonos − Bund : taux d'emprunt à 10 ans de l'Espagne moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_gr: {
+      label: "Grèce",
+      hint: "GGB − Bund : taux d'emprunt à 10 ans de la Grèce moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_pt: {
+      label: "Portugal",
+      hint: "OT − Bund : taux d'emprunt à 10 ans du Portugal moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_be: {
+      label: "Belgique",
+      hint: "OLO − Bund : taux d'emprunt à 10 ans de la Belgique moins celui de l'Allemagne.",
+      explanation: "",
+    },
+    spread_nl: {
+      label: "Pays-Bas",
+      hint: "DSL − Bund : taux d'emprunt à 10 ans des Pays-Bas moins celui de l'Allemagne.",
       explanation: "",
     },
     slope: {
@@ -143,6 +203,36 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation:
         "Share of the labour force without a job. Low unemployment signals a tight labour market, which can push wages, then prices, higher.",
     },
+    core_inflation: {
+      label: "Core inflation",
+      hint: "HICP excluding energy, food, alcohol and tobacco, euro area, annual rate.",
+      explanation:
+        "The underlying price trend, without the most volatile items. The ECB watches it closely to judge whether inflation is durably back near 2%.",
+    },
+    services_inflation: {
+      label: "Services inflation",
+      hint: "HICP services (rents, transport, restaurants…), euro area, annual rate.",
+      explanation:
+        "Closely tied to wages, it comes down only slowly. While it stays high, the ECB is reluctant to cut rates.",
+    },
+    m3: {
+      label: "M3 money supply",
+      hint: "Annual growth of M3: currency, deposits and short-term instruments, euro area.",
+      explanation:
+        "The broad amount of money in the economy. Fast growth can signal inflation ahead; weak growth, slowing credit.",
+    },
+    loans_nfc: {
+      label: "Loans to firms",
+      hint: "Bank loans to euro area non-financial companies, annual growth (adjusted for sales and securitisation).",
+      explanation:
+        "Shows whether ECB decisions reach the economy: when rates rise, lending slows, then investment follows.",
+    },
+    loans_hh: {
+      label: "Loans to households",
+      hint: "Bank loans to euro area households, mostly mortgages, annual growth (adjusted for sales and securitisation).",
+      explanation:
+        "Mainly reflects the housing market, which reacts quickly to mortgage rates: a good gauge of monetary policy.",
+    },
     real_rate: {
       label: "Real rate",
       hint: "ECB deposit rate minus annual inflation: the cost of money after inflation.",
@@ -162,6 +252,26 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
     spread_es: {
       label: "Spain",
       hint: "Bonos − Bund: Spain's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_gr: {
+      label: "Greece",
+      hint: "GGB − Bund: Greece's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_pt: {
+      label: "Portugal",
+      hint: "OT − Bund: Portugal's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_be: {
+      label: "Belgium",
+      hint: "OLO − Bund: Belgium's 10-year borrowing rate minus Germany's.",
+      explanation: "",
+    },
+    spread_nl: {
+      label: "Netherlands",
+      hint: "DSL − Bund: the Netherlands' 10-year borrowing rate minus Germany's.",
       explanation: "",
     },
     slope: {
@@ -184,6 +294,8 @@ export function displayFor(id: string): Display | undefined {
 
 /** Un membre d'un groupe : indicateur, code court et couleur de sa courbe. */
 export type GroupMember = { id: string; code: string; color: string };
+/** Un membre possible d'un groupe, avant sélection (la couleur dépend de sa place). */
+type GroupCandidate = Omit<GroupMember, "color">;
 
 export type GroupDisplay = {
   /** Titre de la vue détail et de l'image exportée. */
@@ -195,14 +307,34 @@ export type GroupDisplay = {
   members: GroupMember[];
 };
 
-/** Membres de chaque groupe, dans l'ordre d'affichage. Couleurs lisibles sur le fond nuit. */
-const GROUP_MEMBERS: Record<string, GroupMember[]> = {
+/** Membres possibles de chaque groupe, dans l'ordre d'affichage (le même que dans Rust). */
+const GROUP_CANDIDATES: Record<string, GroupCandidate[]> = {
   spreads: [
-    { id: "spread_fr", code: "FR", color: "#c9a24a" }, // or
-    { id: "spread_it", code: "IT", color: "#f5f1e8" }, // crème
-    { id: "spread_es", code: "ES", color: "#7fa2c9" }, // bleu gris
+    { id: "spread_fr", code: "FR" },
+    { id: "spread_it", code: "IT" },
+    { id: "spread_es", code: "ES" },
+    { id: "spread_gr", code: "GR" },
+    { id: "spread_pt", code: "PT" },
+    { id: "spread_be", code: "BE" },
+    { id: "spread_nl", code: "NL" },
   ],
 };
+
+/** Couleur des courbes selon leur place (3 au plus), lisibles sur le fond nuit : or, crème, bleu gris. */
+const MEMBER_COLORS = ["#c9a24a", "#f5f1e8", "#7fa2c9"];
+
+/** Membres choisis par l'utilisateur, par groupe (envoyés par Rust ; voir `setGroupSelection`). */
+const selection: Record<string, string[]> = { spreads: ["spread_fr", "spread_it", "spread_es"] };
+
+/** Retient les membres affichés d'un groupe (ex. pays des écarts de taux). */
+export function setGroupSelection(groupId: string, ids: string[]): void {
+  if (ids.length > 0) selection[groupId] = ids;
+}
+
+/** Tous les membres possibles d'un groupe (écran « Indicateurs affichés »). */
+export function groupCandidates(groupId: string): GroupCandidate[] {
+  return GROUP_CANDIDATES[groupId] ?? [];
+}
 
 const GROUP_TEXTS: Record<Lang, Record<string, Pick<GroupDisplay, "label" | "short" | "hint" | "explanation">>> = {
   fr: {
@@ -225,9 +357,15 @@ const GROUP_TEXTS: Record<Lang, Record<string, Pick<GroupDisplay, "label" | "sho
   },
 };
 
-/** Groupe d'affichage (undefined : groupe inconnu de l'interface). */
+/** Groupe d'affichage avec ses membres choisis, colorés selon leur place (undefined : groupe inconnu). */
 export function groupFor(id: string): GroupDisplay | undefined {
-  const members = GROUP_MEMBERS[id];
+  const candidates = GROUP_CANDIDATES[id];
   const texts = GROUP_TEXTS[lang()][id];
-  return members && texts ? { ...texts, members } : undefined;
+  if (!candidates || !texts) return undefined;
+  const chosen = selection[id] ?? [];
+  const members = candidates
+    .filter((candidate) => chosen.includes(candidate.id))
+    .slice(0, MEMBER_COLORS.length)
+    .map((candidate, k) => ({ ...candidate, color: MEMBER_COLORS[k] }));
+  return { ...texts, members };
 }

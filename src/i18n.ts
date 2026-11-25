@@ -88,6 +88,9 @@ const fr = {
   resetLayoutHint: "Revenir à la liste d'origine : tous les indicateurs, dans l'ordre initial",
   keepOne: "Au moins un indicateur reste affiché",
   moveHint: "Glisser pour déplacer (ou ↑ ↓ au clavier)",
+  countriesAria: "Pays affichés dans la ligne des écarts",
+  countriesFull: "3 pays au maximum : retirez-en un d'abord",
+  countriesOne: "Au moins un pays reste affiché",
 
   // Unités et variations
   percent: (n: string) => `${n}${NNBSP}%`,
@@ -199,6 +202,9 @@ const en: Strings = {
   resetLayoutHint: "Back to the original list: every indicator, in the original order",
   keepOne: "At least one indicator stays visible",
   moveHint: "Drag to move (or ↑ ↓ on the keyboard)",
+  countriesAria: "Countries shown in the spreads row",
+  countriesFull: "3 countries at most: remove one first",
+  countriesOne: "At least one country stays visible",
 
   percent: (n) => `${n}%`,
   basisPoints: (n) => `${n} bp`,
