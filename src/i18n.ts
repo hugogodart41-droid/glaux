@@ -43,6 +43,8 @@ const fr = {
   excelHint: "Exporter toutes les données dans un fichier Excel (Documents › Glaux)",
   excelDone: "Fichier Excel enregistré",
   excelFailed: "Échec de l'export Excel",
+  customizeAria: "Choisir les indicateurs",
+  customizeHint: (keys: string) => `Choisir et ordonner les indicateurs (${keys})`,
   quit: "Quitter",
   quitHint: (keys: string) => `Quitter Glaux (${keys})`,
   loading: "Chargement…",
@@ -77,6 +79,15 @@ const fr = {
   /** Sous-titre d'un groupe en points de base (écarts de taux). */
   groupSub: (date: string) => `en pb · ${date}`,
   memberHint: (label: string, value: string, change: string) => `${label} : ${value} (${change})`,
+
+  // Écran « Indicateurs affichés »
+  customizeTitle: "Indicateurs affichés",
+  customizeHelp: "Cliquer sur une ligne pour l'afficher ou la masquer, la faire glisser pour changer l'ordre.",
+  ecbSection: "Séries de la BCE",
+  resetLayout: "Par défaut",
+  resetLayoutHint: "Revenir à la liste d'origine : tous les indicateurs, dans l'ordre initial",
+  keepOne: "Au moins un indicateur reste affiché",
+  moveHint: "Glisser pour déplacer (ou ↑ ↓ au clavier)",
 
   // Unités et variations
   percent: (n: string) => `${n}${NNBSP}%`,
@@ -151,6 +162,8 @@ const en: Strings = {
   excelHint: "Export all data to an Excel file (Documents › Glaux)",
   excelDone: "Excel file saved",
   excelFailed: "Excel export failed",
+  customizeAria: "Choose indicators",
+  customizeHint: (keys) => `Choose and reorder indicators (${keys})`,
   quit: "Quit",
   quitHint: (keys) => `Quit Glaux (${keys})`,
   loading: "Loading…",
@@ -178,6 +191,14 @@ const en: Strings = {
   sparkHint: (low, high) => `Past year: low ${low}, high ${high}`,
   groupSub: (date) => `in bp · ${date}`,
   memberHint: (label, value, change) => `${label}: ${value} (${change})`,
+
+  customizeTitle: "Displayed indicators",
+  customizeHelp: "Click a row to show or hide it, drag it to change the order.",
+  ecbSection: "ECB series",
+  resetLayout: "Reset",
+  resetLayoutHint: "Back to the original list: every indicator, in the original order",
+  keepOne: "At least one indicator stays visible",
+  moveHint: "Drag to move (or ↑ ↓ on the keyboard)",
 
   percent: (n) => `${n}%`,
   basisPoints: (n) => `${n} bp`,

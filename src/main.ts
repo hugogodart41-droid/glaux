@@ -1,6 +1,8 @@
 // Interface de Glaux : affiche les données envoyées par le cœur Rust.
 // Rust télécharge et met en cache ; ici, on ne fait que de l'affichage.
-// Deux écrans dans le même panneau : la liste des indicateurs, et la vue détail.
+// Trois écrans dans le même panneau : la liste des indicateurs, la vue détail,
+// et « Indicateurs affichés » (choix et ordre des lignes).
+// La hauteur du panneau suit son contenu (fitPanel).
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -29,7 +31,7 @@ import {
 import { lang, locale, setLang, t } from "./i18n";
 import { displayFor, groupFor, type GroupDisplay } from "./indicators";
 import { setupTooltips } from "./tooltip";
-import type { DashboardView, IndicatorView, Observation } from "./types";
+import type { DashboardView, IndicatorView, Observation, RowView } from "./types";
 
 // ---------- État ----------
 
@@ -45,6 +47,10 @@ const historyCache = new Map<string, Observation[]>();
 let detailRequest = 0;
 /** Message passager à la place du statut (ex. « Fichier Excel enregistré »), jusqu'à `until`. */
 let statusFlash: { text: string; detail: string; until: number } | null = null;
+/** Écran « Indicateurs affichés » ouvert. */
+let customizeOpen = false;
+/** Enregistrements de l'affichage en cours : les lignes reçues entre-temps sont ignorées. */
+let layoutSaves = 0;
 /** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
 let exportFormat: ExportFormat = loadExportFormat();
 
@@ -198,46 +204,52 @@ function renderStatus(view: DashboardView): void {
   refresh.classList.toggle("is-spinning", view.refreshing);
 }
 
-function render(view: DashboardView): void {
+/** Liste du panneau : lignes affichées, dans l'ordre choisi (écran « Indicateurs affichés »). */
+function renderList(view: DashboardView): void {
+  const list = $("indicators");
+  if (!list) return;
+  const nodes: HTMLLIElement[] = [];
+  let sectionShown = false;
+  for (const row of view.rows) {
+    if (row.hidden) continue;
+    // Groupe (écarts de taux) : une seule ligne pour ses membres.
+    const indicator = view.indicators.find((i) => i.id === row.id);
+    const node = groupFor(row.id)
+      ? renderGroupRow(row.id, view.indicators.filter((i) => i.group === row.id))
+      : indicator
+        ? renderRow(indicator)
+        : null;
+    if (!node) continue;
+    // Intertitre avant la première ligne calculée par Glaux.
+    if (row.derived && !sectionShown) {
+      sectionShown = true;
+      const section = el("li", "indicators__section", t().derivedSection);
+      section.setAttribute("data-tooltip", t().derivedHint);
+      nodes.push(section);
+    }
+    nodes.push(node);
+  }
+  list.replaceChildren(...nodes);
+}
+
+function render(incoming: DashboardView): void {
+  // Choix d'affichage en cours d'enregistrement : on garde celui de l'écran (déjà à jour).
+  const view = layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows } : incoming;
   dashboard = view;
   // Langue choisie dans Rust (système ou préférence) : textes fixes remis à jour si elle change.
   if (setLang(view.language)) applyStaticTexts();
   // Nouvelles données : les historiques en mémoire sont périmés.
   if (!view.refreshing) historyCache.clear();
 
-  const list = $("indicators");
-  if (list) {
-    const rows: HTMLLIElement[] = [];
-    let sectionShown = false;
-    const groupsShown = new Set<string>();
-    for (const indicator of view.indicators) {
-      // Intertitre avant le premier indicateur calculé par Glaux.
-      if (indicator.derived && !sectionShown) {
-        sectionShown = true;
-        const section = el("li", "indicators__section", t().derivedSection);
-        section.setAttribute("data-tooltip", t().derivedHint);
-        rows.push(section);
-      }
-      // Groupe (écarts de taux) : une seule ligne, à la place de son premier membre.
-      if (indicator.group) {
-        if (groupsShown.has(indicator.group)) continue;
-        groupsShown.add(indicator.group);
-        const members = view.indicators.filter((i) => i.group === indicator.group);
-        const row = renderGroupRow(indicator.group, members);
-        if (row) rows.push(row);
-        continue;
-      }
-      const row = renderRow(indicator);
-      if (row) rows.push(row);
-    }
-    list.replaceChildren(...rows);
-  }
+  renderList(view);
+  if (customizeOpen) renderCustomize();
   renderStatus(view);
   renderUpdate(view);
   renderAgenda();
   renderAlertsToggle(view);
   document.querySelector(".brand")?.setAttribute("data-tooltip", t().brandHint(view.version));
   if (detailId && !view.refreshing) void renderDetail();
+  scheduleFit();
 }
 
 // ---------- Agenda ----------
@@ -260,6 +272,7 @@ function renderAgenda(): void {
   });
   agenda.replaceChildren(...items);
   agenda.hidden = items.length === 0; // calendrier épuisé : bandeau masqué
+  scheduleFit();
 }
 
 // ---------- Vue détail ----------
@@ -273,17 +286,28 @@ async function loadHistory(id: string, months: number): Promise<Observation[]> {
   return points;
 }
 
+/** Affiche l'écran du moment (liste, détail ou « Indicateurs affichés ») et ajuste la hauteur. */
+function showScreen(): void {
+  const list = $("indicators");
+  const detail = $("detail");
+  const customize = $("customize");
+  if (list) list.hidden = detailId !== null || customizeOpen;
+  if (detail) detail.hidden = detailId === null;
+  if (customize) customize.hidden = !customizeOpen;
+  $("customize-open")?.classList.toggle("is-active", customizeOpen);
+  scheduleFit();
+}
+
 function openDetail(id: string): void {
   detailId = id;
-  $("indicators")?.setAttribute("hidden", "");
-  $("detail")?.removeAttribute("hidden");
+  customizeOpen = false;
+  showScreen();
   void renderDetail();
 }
 
 function closeDetail(): void {
   detailId = null;
-  $("detail")?.setAttribute("hidden", "");
-  $("indicators")?.removeAttribute("hidden");
+  showScreen();
 }
 
 /** Remplit un élément de la vue détail par son identifiant. */
@@ -506,6 +530,280 @@ async function exportExcel(): Promise<void> {
   }, flash.until - Date.now() + 50);
 }
 
+// ---------- Indicateurs affichés (choix et ordre des lignes) ----------
+
+/** Nom d'une ligne : indicateur ou groupe. */
+function rowLabel(id: string): string {
+  return groupFor(id)?.label ?? displayFor(id)?.label ?? id;
+}
+
+function openCustomize(): void {
+  detailId = null;
+  customizeOpen = true;
+  renderCustomize();
+  showScreen();
+}
+
+function closeCustomize(): void {
+  customizeOpen = false;
+  showScreen();
+}
+
+/** Deux sections, comme dans la liste : séries de la BCE, puis calculés par Glaux. */
+function renderCustomize(): void {
+  const container = $("customize-sections");
+  if (!container || !dashboard || drag) return; // jamais pendant un glisser
+  const strings = t();
+  const rows = dashboard.rows;
+  const lastVisible = rows.filter((row) => !row.hidden).length <= 1;
+  const sections: [boolean, string][] = [
+    [false, strings.ecbSection],
+    [true, strings.derivedSection],
+  ];
+  const nodes = sections.flatMap(([derived, title]) => {
+    const items = rows.filter((row) => row.derived === derived);
+    if (items.length === 0) return [];
+    const list = el("ul", "customize__list");
+    list.append(...items.map((row) => renderCustomItem(row, lastVisible)));
+    return [el("div", "indicators__section", title), list];
+  });
+  // Les lignes sont recréées : le clavier reste sur la même ligne (↑ ↓, Espace).
+  const focused = (document.activeElement as Element | null)?.closest<HTMLElement>(".custom-item")?.dataset.id;
+  container.replaceChildren(...nodes);
+  if (focused) container.querySelector<HTMLElement>(`.custom-item[data-id="${focused}"] .switch`)?.focus();
+}
+
+function renderCustomItem(row: RowView, lastVisible: boolean): HTMLLIElement {
+  const strings = t();
+  const label = rowLabel(row.id);
+  const item = el("li", "custom-item");
+  item.dataset.id = row.id;
+  item.classList.toggle("is-hidden", row.hidden);
+
+  const grip = el("span", "custom-item__grip");
+  grip.setAttribute("data-tooltip", strings.moveHint);
+
+  // Interrupteur : afficher / masquer. Le dernier indicateur affiché ne peut pas être masqué.
+  const toggle = el("button", "switch");
+  toggle.type = "button";
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(!row.hidden));
+  toggle.setAttribute("aria-label", label);
+  if (!row.hidden && lastVisible) {
+    toggle.setAttribute("aria-disabled", "true");
+    toggle.setAttribute("data-tooltip", strings.keepOne);
+  }
+
+  item.append(grip, el("span", "custom-item__label", label), toggle);
+  return item;
+}
+
+/**
+ * Enregistre l'ordre et les lignes masquées. L'écran est mis à jour tout de suite ;
+ * Rust enregistre dans prefs.json puis renvoie la vue (événement dashboard-updated).
+ */
+function saveLayout(rows: RowView[]): void {
+  if (!dashboard) return;
+  dashboard = { ...dashboard, rows };
+  renderCustomize();
+  renderList(dashboard);
+  layoutSaves += 1;
+  invoke("set_layout", {
+    order: rows.map((row) => row.id),
+    hidden: rows.filter((row) => row.hidden).map((row) => row.id),
+  })
+    .catch((err) => console.error("Choix des indicateurs non enregistré :", err))
+    .finally(() => {
+      layoutSaves -= 1;
+    });
+}
+
+function toggleRow(id: string): void {
+  if (!dashboard) return;
+  const rows = dashboard.rows.map((row) => (row.id === id ? { ...row, hidden: !row.hidden } : row));
+  if (rows.every((row) => row.hidden)) return; // au moins une ligne reste affichée
+  saveLayout(rows);
+}
+
+/** Clavier (↑ ↓ sur une ligne) : déplace la ligne d'un cran, dans sa section. */
+function moveRow(id: string, step: -1 | 1): void {
+  if (!dashboard) return;
+  const rows = [...dashboard.rows];
+  const from = rows.findIndex((row) => row.id === id);
+  const to = from + step;
+  if (from < 0 || to < 0 || to >= rows.length || rows[to].derived !== rows[from].derived) return;
+  [rows[from], rows[to]] = [rows[to], rows[from]];
+  saveLayout(rows);
+}
+
+/** Lignes dans l'ordre affiché à l'écran (après un glisser). */
+function rowsFromScreen(): RowView[] {
+  const byId = new Map((dashboard?.rows ?? []).map((row) => [row.id, row]));
+  return Array.from(document.querySelectorAll<HTMLElement>(".custom-item")).flatMap((item) => {
+    const row = byId.get(item.dataset.id ?? "");
+    return row ? [row] : [];
+  });
+}
+
+// Glisser pour réordonner : la ligne suit le pointeur ; dès que son centre dépasse celui
+// d'une voisine, les deux échangent leur place (sans quitter la section).
+
+/** Distance (en points) à partir de laquelle un appui devient un glisser, pas un clic. */
+const DRAG_THRESHOLD = 4;
+
+type Drag = { item: HTMLElement; pointerId: number; startY: number; lastY: number; shift: number; moved: boolean };
+let drag: Drag | null = null;
+/** Le clic qui suit un glisser ne masque pas la ligne. */
+let ignoreClick = false;
+
+/** Petite animation de la voisine qui change de place. */
+function slide(node: HTMLElement, from: number): void {
+  node.animate?.([{ transform: `translateY(${from}px)` }, { transform: "translateY(0)" }], {
+    duration: 120,
+    easing: "ease-out",
+  });
+}
+
+function followPointer(current: Drag): void {
+  const { item } = current;
+  const list = item.parentElement;
+  if (!list) return;
+  for (;;) {
+    const next = item.nextElementSibling as HTMLElement | null;
+    const prev = item.previousElementSibling as HTMLElement | null;
+    if (next && current.shift > next.offsetHeight / 2) {
+      list.insertBefore(next, item); // la voisine remonte au-dessus
+      current.shift -= next.offsetHeight;
+      slide(next, item.offsetHeight);
+    } else if (prev && current.shift < -prev.offsetHeight / 2) {
+      list.insertBefore(prev, item.nextSibling); // la voisine descend en dessous
+      current.shift += prev.offsetHeight;
+      slide(prev, -item.offsetHeight);
+    } else {
+      break;
+    }
+  }
+  // La ligne ne sort pas visuellement de sa section.
+  let shift = current.shift;
+  if (!item.previousElementSibling) shift = Math.max(shift, 0);
+  if (!item.nextElementSibling) shift = Math.min(shift, 0);
+  item.style.transform = `translateY(${shift}px)`;
+}
+
+function setupCustomize(): void {
+  const root = $("customize");
+  if (!root) return;
+
+  root.addEventListener("pointerdown", (event) => {
+    const target = event.target as Element | null;
+    const item = target?.closest<HTMLElement>(".custom-item");
+    if (event.button !== 0 || !item || target?.closest(".switch")) return;
+    ignoreClick = false;
+    drag = { item, pointerId: event.pointerId, startY: event.clientY, lastY: event.clientY, shift: 0, moved: false };
+    item.setPointerCapture(event.pointerId);
+  });
+
+  root.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!drag.moved && Math.abs(event.clientY - drag.startY) < DRAG_THRESHOLD) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      drag.item.classList.add("is-dragging");
+    }
+    drag.shift += event.clientY - drag.lastY;
+    drag.lastY = event.clientY;
+    followPointer(drag);
+  });
+
+  const endDrag = (event: PointerEvent) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const { item, moved } = drag;
+    drag = null;
+    item.classList.remove("is-dragging");
+    item.style.transform = "";
+    if (moved) {
+      ignoreClick = true;
+      saveLayout(rowsFromScreen());
+    }
+  };
+  root.addEventListener("pointerup", endDrag);
+  root.addEventListener("pointercancel", endDrag);
+
+  // Clic sur une ligne (ou son interrupteur, ou Espace au clavier) : afficher / masquer.
+  root.addEventListener("click", (event) => {
+    if (ignoreClick) {
+      ignoreClick = false;
+      return;
+    }
+    const target = event.target as Element | null;
+    const item = target?.closest<HTMLElement>(".custom-item");
+    if (!item?.dataset.id) return;
+    if (item.querySelector(".switch")?.getAttribute("aria-disabled") === "true") return;
+    toggleRow(item.dataset.id);
+    item.querySelector<HTMLElement>(".switch")?.focus();
+  });
+
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const item = (event.target as Element | null)?.closest<HTMLElement>(".custom-item");
+    if (!item?.dataset.id) return;
+    event.preventDefault();
+    moveRow(item.dataset.id, event.key === "ArrowUp" ? -1 : 1);
+  });
+
+  $("customize-back")?.addEventListener("click", closeCustomize);
+  // « Par défaut » : listes vides = ordre d'origine, tout affiché (Rust renvoie la vue).
+  $("customize-reset")?.addEventListener("click", () => {
+    invoke("set_layout", { order: [], hidden: [] }).catch((err) =>
+      console.error("Retour à la liste d'origine impossible :", err),
+    );
+  });
+}
+
+// ---------- Hauteur du panneau ----------
+
+/** Hauteur minimale de la vue détail : la courbe garde une taille lisible. */
+const DETAIL_MIN_HEIGHT = 560;
+/** Bordure du panneau, en haut et en bas (voir .panel dans styles.css). */
+const PANEL_BORDER = 2;
+/** Hauteur du panneau sur la liste, retenue pour la vue détail (mêmes dimensions si possible). */
+let listHeight = 0;
+let fitTimer: number | undefined;
+
+/** Hauteur « naturelle » d'un élément : celle de ses enfants, quelle que soit la fenêtre. */
+function contentHeight(node: HTMLElement | null): number {
+  if (!node || node.hidden) return 0;
+  const style = getComputedStyle(node);
+  let height =
+    parseFloat(style.paddingTop) +
+    parseFloat(style.paddingBottom) +
+    parseFloat(style.borderTopWidth) +
+    parseFloat(style.borderBottomWidth);
+  for (const child of Array.from(node.children)) height += child.getBoundingClientRect().height;
+  return height;
+}
+
+/** Hauteur voulue pour l'écran du moment : en-tête, agenda et pied compris. */
+function desiredHeight(): number {
+  const fixed = ["panel__header", "agenda", "panel__footer"]
+    .map((name) => document.querySelector<HTMLElement>(`.${name}`)?.offsetHeight ?? 0)
+    .reduce((a, b) => a + b, PANEL_BORDER);
+  if (customizeOpen) return fixed + contentHeight($("customize"));
+  if (detailId) return Math.max(listHeight, DETAIL_MIN_HEIGHT);
+  listHeight = fixed + contentHeight($("indicators"));
+  return listHeight;
+}
+
+/** Demande à Rust d'ajuster la hauteur du panneau (regroupe les demandes rapprochées). */
+function scheduleFit(): void {
+  window.clearTimeout(fitTimer);
+  fitTimer = window.setTimeout(() => {
+    const height = Math.ceil(desiredHeight());
+    if (Math.abs(height - window.innerHeight) < 1) return;
+    invoke("resize_panel", { height }).catch((err) => console.error("Redimensionnement impossible :", err));
+  }, 0);
+}
+
 // ---------- Alertes (notifications) ----------
 
 function renderAlertsToggle(view: DashboardView): void {
@@ -612,6 +910,13 @@ function applyStaticTexts(): void {
   set("#language", strings.switchLanguage, strings.switchLanguageHint);
   applyExportButtons();
 
+  set("#customize-back", strings.back, strings.backHint);
+  set("#customize-reset", strings.resetLayout, strings.resetLayoutHint);
+  set("#customize-title", strings.customizeTitle);
+  set("#customize-help", strings.customizeHelp);
+  const customize = $("customize-open");
+  customize?.setAttribute("aria-label", strings.customizeAria);
+  customize?.setAttribute("data-tooltip", strings.customizeHint(keys(",")));
   const excel = $("excel");
   excel?.setAttribute("aria-label", strings.excelAria);
   excel?.setAttribute("data-tooltip", strings.excelHint);
@@ -638,6 +943,7 @@ function setupButtons(): void {
   $("quit")?.addEventListener("click", quitApp);
   $("refresh")?.addEventListener("click", refreshNow);
   $("excel")?.addEventListener("click", () => void exportExcel());
+  $("customize-open")?.addEventListener("click", () => (customizeOpen ? closeCustomize() : openCustomize()));
   $("language")?.addEventListener("click", toggleLanguage);
   $("update")?.addEventListener("click", installUpdate);
 
@@ -674,12 +980,17 @@ function setupButtons(): void {
 }
 
 // Échap : retour à la liste, ou ferme le panneau. ⌘Q quitte, ⌘R actualise,
+// ⌘, ouvre « Indicateurs affichés » ;
 // en vue détail : ⌘E enregistre l'image, ⌘C la copie (sauf si du texte est sélectionné).
 function listenForShortcuts(): void {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (detailId) {
         closeDetail();
+        return;
+      }
+      if (customizeOpen) {
+        closeCustomize();
         return;
       }
       getCurrentWindow()
@@ -696,6 +1007,10 @@ function listenForShortcuts(): void {
     } else if (key === "r") {
       event.preventDefault(); // évite le rechargement de la page web
       refreshNow();
+    } else if (key === ",") {
+      event.preventDefault();
+      if (customizeOpen) closeCustomize();
+      else openCustomize();
     } else if (key === "e" && detailId) {
       event.preventDefault();
       void exportCurrent("save");
@@ -721,6 +1036,7 @@ function renderToday(): void {
 async function start(): Promise<void> {
   applyStaticTexts();
   setupButtons();
+  setupCustomize();
   setupTooltips();
   listenForShortcuts();
 
@@ -735,6 +1051,15 @@ async function start(): Promise<void> {
   window.addEventListener("focus", () => {
     renderToday();
     renderAgenda();
+  });
+
+  // Le panneau a changé de hauteur (ex. liste courte → vue détail) : la courbe suit.
+  let resizeTimer: number | undefined;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => {
+      if (detailId) void renderDetail();
+    }, 30);
   });
 }
 

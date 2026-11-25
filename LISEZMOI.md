@@ -35,7 +35,7 @@ Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en ca
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
-Préférences (alertes activées, rappels déjà envoyés, langue) : `prefs.json`, dans le même dossier que le cache.
+Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache.
 
 ## Image exportée
 
@@ -54,6 +54,22 @@ construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_
 - « Mensuel » : inflation, chômage, taux réel, taux 10 ans DE/FR/IT/ES, écarts avec l'Allemagne (pb).
 - « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
 Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
+
+## Indicateurs affichés
+
+Icône « réglages » dans l'en-tête (ou ⌘,) : écran « Indicateurs affichés ».
+- Clic sur une ligne (ou Espace) : l'afficher ou la masquer. Le dernier indicateur affiché ne se masque pas.
+- Glisser une ligne (ou ↑ ↓ au clavier) : changer l'ordre, à l'intérieur de sa section. Les séries de la BCE
+  restent avant les indicateurs calculés par Glaux, pour ne pas mélanger données officielles et calculs.
+- « Par défaut » : tout réafficher, dans l'ordre d'origine.
+- Enregistré dans `prefs.json` (`order`, `hidden`) par Rust (`store.rs`, `set_layout`). Une ligne ajoutée par
+  une future version se place en fin de sa section ; un identifiant inconnu est ignoré.
+- Les alertes, l'agenda et l'export Excel ne dépendent pas de ce choix.
+
+Hauteur du panneau : calculée par l'interface d'après son contenu (`fitPanel` dans `src/main.ts`), appliquée
+par Rust (`resize_panel` dans `main.rs`), qui replace le panneau contre l'icône. Liste : juste la place des
+lignes affichées ; vue détail : même hauteur que la liste, 560 points au minimum pour la courbe ; jamais plus
+haut que l'écran (la liste défile alors).
 
 ## Langue
 
@@ -111,7 +127,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 
 | Fichier | Rôle |
 |---|---|
-| `src-tauri/src/main.rs` | Icône de la barre des menus, panneau, commandes appelées par l'interface, fil d'actualisation |
+| `src-tauri/src/main.rs` | Icône de la barre des menus, panneau (position, hauteur), commandes appelées par l'interface, fil d'actualisation |
 | `src-tauri/src/ecb.rs` | Les 6 séries BCE, téléchargement et lecture du CSV |
 | `src-tauri/src/data.rs` | Calculs : dernière valeur, variation sur 1 mois, mini-courbe, historique, taux réel, pente |
 | `src-tauri/src/agenda.rs` | Dates officielles des décisions BCE et des inflations flash (**à mettre à jour chaque année**, liens dans le fichier) et rappels du jour J |
@@ -120,7 +136,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
 | `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, sources) |
 | `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification quotidienne, installation au clic |
-| `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation) et indicateurs calculés à la demande |
+| `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation), indicateurs calculés à la demande, préférences (dont lignes affichées et leur ordre) |
 | `src-tauri/tauri.conf.json` | Fenêtre, identifiant de l'app, icônes, sécurité, mises à jour |
 | `src-tauri/tauri.release.conf.json` | En plus pour les versions publiées : DMG, installeur Windows, fichiers de mise à jour |
 | `.github/workflows/` | GitHub Actions : tests à chaque envoi, compilation et brouillon de version à chaque étiquette |
@@ -129,8 +145,8 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/capabilities/default.json` | Ce que l'interface a le droit de demander au cœur Rust |
 | `src-tauri/Info.plist` | Mac : pas d'icône dans le Dock |
 | `src-tauri/icons/` | Icônes générées depuis `app-icon.png` (`npm run tauri icon app-icon.png`) |
-| `index.html`, `src/styles.css` | Structure et style du panneau (liste + vue détail) |
-| `src/main.ts` | Interface : liste, vue détail, boutons, raccourcis |
+| `index.html`, `src/styles.css` | Structure et style du panneau (liste, vue détail, indicateurs affichés) |
+| `src/main.ts` | Interface : liste, vue détail, indicateurs affichés (glisser, interrupteurs), hauteur du panneau, boutons, raccourcis |
 | `src/chart.ts` | Courbes sans bibliothèque : mini-courbes, courbe de la vue détail, courbe de l'image |
 | `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée |
 | `src/agenda.ts` | Bandeau d'agenda : compte à rebours (les dates viennent de Rust) |
@@ -147,4 +163,5 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 5. Indicateurs calculés : taux réel, pente des taux
 6. Agenda : prochaine décision BCE, prochaine inflation
 7. Notifications
-8. FR/EN, mises à jour automatiques, Windows, version publiée ← **ici**
+8. FR/EN, mises à jour automatiques, Windows, version publiée (v0.1.0)
+9. V2 : écarts de taux par pays, formats d'image + copier, export Excel, choix et ordre des indicateurs ← **ici** (v0.2.0)

@@ -25,8 +25,8 @@ use alerts::Alert;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, State, WebviewWindow,
-    WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, State,
+    WebviewWindow, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 // Module de notifications de Tauri : Windows et Linux seulement (Mac : macos_notify).
@@ -51,6 +51,13 @@ const REOPEN_GUARD: Duration = Duration::from_millis(250);
 
 /// Espace entre l'icône et le panneau, et marge avec le bord de l'écran (en points).
 const GAP: f64 = 6.0;
+
+/// Hauteur minimale du panneau (en points) : en-tête, une ligne et pied.
+const MIN_PANEL_HEIGHT: f64 = 160.0;
+
+/// Place laissée à la barre des menus (Mac) ou des tâches (Windows) quand le panneau
+/// est aussi haut que l'écran (en points).
+const SCREEN_MARGIN: f64 = 80.0;
 
 /// Fréquence à laquelle le fil d'arrière-plan vérifie si les données sont trop vieilles.
 const CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -84,30 +91,39 @@ fn remember_tray_rect(app: &AppHandle, event: &TrayIconEvent) {
     }
 }
 
-/// Place le panneau contre l'icône :
+/// Place le panneau contre l'icône, à sa taille actuelle.
+fn place_panel(app: &AppHandle, window: &WebviewWindow) {
+    if let Ok(size) = window.outer_size() {
+        place_panel_sized(
+            app,
+            window,
+            PhysicalSize::new(size.width as f64, size.height as f64),
+        );
+    }
+}
+
+/// Place le panneau contre l'icône, pour une taille donnée (en pixels physiques) :
 /// - icône en haut de l'écran (barre des menus Mac) → panneau en dessous ;
 /// - icône en bas (barre des tâches Windows) → panneau au-dessus.
-fn place_panel(app: &AppHandle, window: &WebviewWindow) {
+///
+/// Renvoie faux si la position de l'icône est encore inconnue (panneau laissé en place).
+fn place_panel_sized(app: &AppHandle, window: &WebviewWindow, panel: PhysicalSize<f64>) -> bool {
     let tray = app
         .state::<PanelState>()
         .tray_rect
         .lock()
         .ok()
         .and_then(|saved| *saved);
-    // Position de l'icône encore inconnue : le panneau garde sa position actuelle.
     let Some((tray_pos, tray_size)) = tray else {
-        return;
-    };
-    let Ok(panel) = window.outer_size() else {
-        return;
+        return false;
     };
     let Ok(Some(monitor)) = window.monitor_from_point(tray_pos.x, tray_pos.y) else {
-        return;
+        return false;
     };
 
     let scale = monitor.scale_factor();
     let gap = GAP * scale;
-    let (panel_w, panel_h) = (panel.width as f64, panel.height as f64);
+    let (panel_w, panel_h) = (panel.width, panel.height);
     let screen_x = monitor.position().x as f64;
     let screen_y = monitor.position().y as f64;
     let screen_w = monitor.size().width as f64;
@@ -129,6 +145,49 @@ fn place_panel(app: &AppHandle, window: &WebviewWindow) {
     };
 
     let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    true
+}
+
+/// Ajuste la hauteur du panneau à son contenu (calculée par l'interface, en points),
+/// sans le décoller de l'icône : il raccourcit quand on masque des indicateurs.
+///
+/// Mac : changer la taille d'une fenêtre garde son coin bas-gauche fixe ; le panneau
+/// est donc replacé juste après, pour que son bord haut reste sous l'icône.
+#[tauri::command]
+fn resize_panel(app: AppHandle, height: f64) -> Result<(), String> {
+    if !height.is_finite() {
+        return Err("hauteur invalide".into());
+    }
+    let window = app.get_webview_window(PANEL).ok_or("panneau introuvable")?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let current = window.inner_size().map_err(|e| e.to_string())?;
+    let width = current.width as f64 / scale;
+
+    // Pas plus haut que l'écran : au-delà, la liste défile.
+    let screen = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.size().height as f64 / m.scale_factor())
+        .unwrap_or(900.0);
+    let max = (screen - SCREEN_MARGIN).max(MIN_PANEL_HEIGHT);
+    let height = height.round().clamp(MIN_PANEL_HEIGHT, max);
+    if (current.height as f64 / scale - height).abs() < 1.0 {
+        return Ok(()); // déjà à la bonne taille
+    }
+
+    let top_left = window.outer_position().ok();
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    let size = PhysicalSize::new(width * scale, height * scale);
+    if !place_panel_sized(&app, &window, size) {
+        // Icône pas encore repérée : le bord haut du panneau reste où il était.
+        if let Some(position) = top_left {
+            let _ = window.set_position(position);
+        }
+    }
+    Ok(())
 }
 
 /// Masque le panneau et note l'heure.
@@ -393,6 +452,15 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     result
 }
 
+/// Ordre et visibilité des lignes du panneau (écran « Indicateurs affichés »).
+/// Listes vides : retour à la liste d'origine.
+#[tauri::command]
+fn set_layout(app: AppHandle, order: Vec<String>, hidden: Vec<String>) -> Result<(), String> {
+    app.state::<Store>().set_layout(&order, &hidden)?;
+    notify(&app);
+    Ok(())
+}
+
 /// Change la langue de Glaux : interface (renvoyée à l'écran), notifications, menu de l'icône.
 #[tauri::command]
 fn set_language(app: AppHandle, language: Lang) -> Result<(), String> {
@@ -507,6 +575,8 @@ fn main() {
             export_excel,
             set_notifications,
             set_language,
+            set_layout,
+            resize_panel,
             install_update,
             quit_app
         ])

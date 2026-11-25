@@ -19,11 +19,22 @@ export type IndicatorView = {
   spark: number[];
 };
 
+/** Une ligne du panneau : indicateur ou groupe (« spreads »), dans l'ordre choisi. */
+export type RowView = {
+  id: string;
+  /** Ligne calculée par Glaux (section « Calculés par Glaux »). */
+  derived: boolean;
+  /** Masquée par l'utilisateur (écran « Indicateurs affichés »). */
+  hidden: boolean;
+};
+
 /** Dates à venir (« 2026-12-17 »), aujourd'hui compris, définies dans src-tauri/src/agenda.rs. */
 export type AgendaData = { ecb: string[]; hicp: string[] };
 
 export type DashboardView = {
   indicators: IndicatorView[];
+  /** Lignes du panneau dans l'ordre choisi, masquées comprises. */
+  rows: RowView[];
   /** Dernière actualisation complète réussie (millisecondes). */
   updatedAt: number | null;
   refreshing: boolean;

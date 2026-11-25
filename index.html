@@ -19,6 +19,15 @@
         </div>
         <div class="panel__actions">
           <span class="panel__date" id="today"></span>
+          <!-- Choix et ordre des indicateurs affichés (écran « Indicateurs affichés »). -->
+          <button type="button" class="icon-button" id="customize-open" aria-label="Choisir les indicateurs">
+            <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+              <path d="M0.5 3h12M0.5 6.5h12M0.5 10h12" fill="none" stroke="currentColor" stroke-width="1.2" />
+              <circle class="knob" cx="4" cy="3" r="1.7" stroke="currentColor" stroke-width="1.2" />
+              <circle class="knob" cx="9" cy="6.5" r="1.7" stroke="currentColor" stroke-width="1.2" />
+              <circle class="knob" cx="5.5" cy="10" r="1.7" stroke="currentColor" stroke-width="1.2" />
+            </svg>
+          </button>
           <!-- Export Excel de toutes les séries (src-tauri/src/excel.rs). -->
           <button type="button" class="icon-button" id="excel" aria-label="Exporter en Excel">
             <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
@@ -72,6 +81,20 @@
         </div>
         <div class="detail__chart" id="detail-chart"></div>
         <p class="detail__explain" id="detail-explain"></p>
+      </section>
+
+      <!-- Écran « Indicateurs affichés » : afficher / masquer, glisser pour réordonner.
+           Les lignes sont remplies par src/main.ts. -->
+      <section class="customize" id="customize" hidden>
+        <div class="customize__bar">
+          <button type="button" class="link-button" id="customize-back">‹ Indicateurs</button>
+          <button type="button" class="link-button" id="customize-reset">Par défaut</button>
+        </div>
+        <div class="customize__head">
+          <span class="detail__title" id="customize-title">Indicateurs affichés</span>
+          <span class="customize__help" id="customize-help"></span>
+        </div>
+        <div id="customize-sections"></div>
       </section>
 
       <footer class="panel__footer">

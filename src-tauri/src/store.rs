@@ -3,7 +3,8 @@
 // Emplacement : dossier de données de l'app
 //   Mac     : ~/Library/Application Support/com.howzen.glaux/cache.json
 //   Windows : %APPDATA%\com.howzen.glaux\cache.json
-// Les préférences (alertes activées, rappels déjà envoyés, langue) sont à côté, dans prefs.json.
+// Les préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés)
+// sont à côté, dans prefs.json.
 
 use std::borrow::Cow;
 use std::fs;
@@ -64,6 +65,10 @@ struct Prefs {
     reminded: Vec<String>,
     /// Langue choisie dans le panneau (absente : langue du système).
     language: Option<Lang>,
+    /// Ordre des lignes du panneau choisi par l'utilisateur (vide : ordre par défaut).
+    order: Vec<String>,
+    /// Lignes masquées par l'utilisateur.
+    hidden: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -72,6 +77,8 @@ impl Default for Prefs {
             notifications: true,
             reminded: Vec::new(),
             language: None,
+            order: Vec::new(),
+            hidden: Vec::new(),
         }
     }
 }
@@ -95,6 +102,55 @@ const DERIVED: [(&str, Frequency); 5] = [
 /// Groupe d'affichage d'un indicateur (plusieurs indicateurs sur une même ligne du panneau).
 fn group_of(id: &str) -> Option<&'static str> {
     id.starts_with("spread_").then_some("spreads")
+}
+
+/// Lignes du panneau dans l'ordre par défaut : les séries BCE affichées, puis les indicateurs
+/// calculés par Glaux (un groupe n'occupe qu'une ligne, ex. « spreads »).
+pub fn default_rows() -> Vec<&'static str> {
+    let mut rows: Vec<&'static str> = SERIES
+        .iter()
+        .filter(|def| def.shown)
+        .map(|def| def.id)
+        .collect();
+    for (id, _) in &DERIVED {
+        let row = group_of(id).unwrap_or(id);
+        if !rows.contains(&row) {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// Une ligne du panneau telle qu'envoyée à l'interface : ordre et visibilité choisis.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RowView {
+    pub id: &'static str,
+    /// Ligne calculée par Glaux (section « Calculés par Glaux »).
+    pub derived: bool,
+    pub hidden: bool,
+}
+
+/// Range les lignes selon le choix de l'utilisateur :
+/// - identifiants inconnus ignorés (fichier modifié à la main, ligne retirée de Glaux) ;
+/// - lignes absentes du choix (nouvelles dans une version de Glaux) : à la fin de leur section ;
+/// - les séries BCE restent toujours avant les indicateurs calculés ;
+/// - jamais toutes masquées (sinon le panneau serait vide) : tout réapparaît.
+fn arrange_rows(order: &[String], hidden: &[String]) -> Vec<RowView> {
+    let rank = |row: &str| order.iter().position(|id| id == row).unwrap_or(usize::MAX);
+    let mut rows: Vec<RowView> = default_rows()
+        .into_iter()
+        .map(|id| RowView {
+            id,
+            derived: !SERIES.iter().any(|def| def.id == id),
+            hidden: hidden.iter().any(|h| h == id),
+        })
+        .collect();
+    // Tri stable : à rang égal (lignes absentes du choix), l'ordre par défaut est conservé.
+    rows.sort_by_key(|row| (row.derived, rank(row.id)));
+    if rows.iter().all(|row| row.hidden) {
+        rows.iter_mut().for_each(|row| row.hidden = false);
+    }
+    rows
 }
 
 /// Nom sûr pour un fichier exporté : l'identifiant connu correspondant (série affichée,
@@ -143,6 +199,8 @@ pub struct DashboardView {
     pub refreshing: bool,
     /// Message de la dernière erreur, si la dernière actualisation a échoué.
     pub error: Option<String>,
+    /// Lignes du panneau, dans l'ordre choisi, avec celles masquées (écran « Indicateurs affichés »).
+    pub rows: Vec<RowView>,
     /// Prochaines décisions BCE et inflations flash.
     pub agenda: AgendaView,
     /// Notifications activées.
@@ -322,6 +380,39 @@ impl Store {
         self.save_prefs(&prefs)
     }
 
+    /// Lignes du panneau : ordre et visibilité choisis par l'utilisateur.
+    pub fn rows(&self) -> Vec<RowView> {
+        match self.prefs.lock() {
+            Ok(prefs) => arrange_rows(&prefs.order, &prefs.hidden),
+            Err(_) => arrange_rows(&[], &[]),
+        }
+    }
+
+    /// Enregistre l'ordre des lignes et celles masquées (prefs.json).
+    /// Listes vides : retour à la liste d'origine. Refuse de tout masquer.
+    pub fn set_layout(&self, order: &[String], hidden: &[String]) -> Result<(), String> {
+        let defaults = default_rows();
+        if defaults.iter().all(|id| hidden.iter().any(|h| h == id)) {
+            return Err("au moins un indicateur doit rester affiché".into());
+        }
+        let rows = arrange_rows(order, hidden);
+        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
+        // Ordre d'origine : rien d'enregistré, pour qu'une ligne ajoutée par une future
+        // version de Glaux prenne sa place prévue.
+        let default_order = rows.iter().map(|row| row.id).eq(defaults);
+        prefs.order = if default_order {
+            Vec::new()
+        } else {
+            rows.iter().map(|row| row.id.to_string()).collect()
+        };
+        prefs.hidden = rows
+            .iter()
+            .filter(|row| row.hidden)
+            .map(|row| row.id.to_string())
+            .collect();
+        self.save_prefs(&prefs)
+    }
+
     /// Rappels du jour J à envoyer maintenant, chacun une seule fois (même après un redémarrage).
     pub fn take_due_reminders(&self, today: NaiveDate, now: NaiveTime) -> Vec<Alert> {
         let lang = self.lang();
@@ -438,6 +529,7 @@ impl Store {
             updated_at: data.last_success.map(|t| t * 1000),
             refreshing: self.refreshing.load(Ordering::SeqCst),
             error: self.last_error.lock().ok().and_then(|e| e.clone()),
+            rows: self.rows(),
             agenda: agenda_view(today),
             notifications: self.notifications_enabled(),
             notification_error: None,
@@ -652,6 +744,95 @@ mod tests {
         assert_eq!(store.lang(), Lang::Fr);
         // Redémarrage sur un système en anglais : le choix de l'utilisateur l'emporte.
         assert_eq!(Store::load(dir.clone(), Lang::En).lang(), Lang::Fr);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn ids(rows: &[RowView]) -> Vec<&str> {
+        rows.iter().map(|row| row.id).collect()
+    }
+
+    fn strings(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn lignes_par_defaut() {
+        assert_eq!(
+            default_rows(),
+            [
+                "deposit_rate",
+                "hicp",
+                "estr",
+                "yield_10y",
+                "eurusd",
+                "unemployment",
+                "real_rate",
+                "slope",
+                "spreads"
+            ]
+        );
+        let rows = arrange_rows(&[], &[]);
+        assert_eq!(ids(&rows), default_rows());
+        assert!(rows.iter().all(|row| !row.hidden));
+        assert!(!rows[0].derived && rows[8].derived); // taux de dépôt : BCE ; écarts : calculés
+    }
+
+    #[test]
+    fn ordre_choisi_par_section_et_lignes_nouvelles_a_la_fin() {
+        // L'utilisateur met les écarts en tête et l'inflation avant le taux de dépôt ;
+        // « estr » et d'autres manquent (version plus ancienne), « inconnu » n'existe pas.
+        let order = strings(&["spreads", "inconnu", "hicp", "deposit_rate", "slope"]);
+        let rows = arrange_rows(&order, &[]);
+        assert_eq!(
+            ids(&rows),
+            [
+                "hicp",
+                "deposit_rate",
+                "estr",
+                "yield_10y",
+                "eurusd",
+                "unemployment",
+                "spreads", // les calculés restent après les séries BCE
+                "slope",
+                "real_rate" // absent du choix : en fin de section
+            ]
+        );
+    }
+
+    #[test]
+    fn jamais_toutes_les_lignes_masquees() {
+        let all = strings(&default_rows());
+        assert!(arrange_rows(&[], &all).iter().all(|row| !row.hidden));
+        let dir = temp_dir("tout-masque");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        assert!(store.set_layout(&[], &all).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn choix_d_affichage_enregistre_puis_reinitialise() {
+        let dir = temp_dir("lignes");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        let order = strings(&["eurusd", "deposit_rate", "spreads"]);
+        store
+            .set_layout(&order, &strings(&["unemployment", "slope", "inconnu"]))
+            .unwrap();
+
+        // Redémarrage : le choix est relu depuis prefs.json.
+        let reopened = Store::load(dir.clone(), Lang::Fr);
+        let rows = reopened.rows();
+        assert_eq!(&ids(&rows)[..2], ["eurusd", "deposit_rate"]);
+        assert_eq!(rows[6].id, "spreads");
+        let hidden: Vec<_> = rows.iter().filter(|r| r.hidden).map(|r| r.id).collect();
+        assert_eq!(hidden, ["unemployment", "slope"]);
+        let view = reopened.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
+        assert_eq!(view.rows, rows);
+
+        // « Par défaut » : rien d'enregistré, ordre d'origine.
+        reopened.set_layout(&[], &[]).unwrap();
+        assert_eq!(ids(&reopened.rows()), default_rows());
+        let prefs = fs::read_to_string(dir.join("prefs.json")).unwrap();
+        assert!(prefs.contains("\"order\": []"));
         let _ = fs::remove_dir_all(dir);
     }
 
