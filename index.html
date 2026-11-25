@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Glaux</title>
+    <!-- Pas de favicon (évite une requête inutile) -->
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <!-- Panneau principal : s'ouvre depuis l'icône de la barre des menus -->
+    <main class="panel">
+      <header class="panel__header">
+        <div class="brand">
+          <span class="brand__name">Glaux</span>
+          <span class="brand__tagline">Zone euro</span>
+        </div>
+        <div class="panel__actions">
+          <span class="panel__date" id="today"></span>
+          <button type="button" class="icon-button" id="refresh" aria-label="Actualiser">↻</button>
+        </div>
+      </header>
+
+      <!-- Agenda : prochaine décision BCE, prochaine inflation (src/agenda.ts) -->
+      <nav class="agenda" id="agenda" aria-label="Agenda"></nav>
+
+      <!-- La liste des indicateurs est remplie par src/main.ts (textes : src/i18n.ts) -->
+      <ul class="indicators" id="indicators" aria-label="Indicateurs macroéconomiques"></ul>
+
+      <!-- Vue détail d'un indicateur (clic sur une ligne de la liste) -->
+      <section class="detail" id="detail" hidden>
+        <div class="detail__bar">
+          <button type="button" class="link-button" id="back">‹ Indicateurs</button>
+          <button type="button" class="link-button link-button--gold" id="export">Exporter l'image</button>
+        </div>
+        <div class="detail__head">
+          <div class="detail__left">
+            <span class="detail__title" id="detail-title"></span>
+            <span class="indicator__sub" id="detail-date"></span>
+          </div>
+          <div class="detail__right">
+            <span class="detail__value" id="detail-value"></span>
+            <span class="indicator__sub" id="detail-change"></span>
+          </div>
+        </div>
+        <div class="detail__controls">
+          <div class="segmented" role="group" aria-label="Période">
+            <button type="button" data-months="12">1 an</button>
+            <button type="button" data-months="60">5 ans</button>
+          </div>
+          <span class="detail__readout" id="detail-readout"></span>
+        </div>
+        <div class="detail__chart" id="detail-chart"></div>
+        <p class="detail__explain" id="detail-explain"></p>
+      </section>
+
+      <footer class="panel__footer">
+        <span id="status">Chargement…</span>
+        <!-- Nouvelle version disponible : remplace le statut (src-tauri/src/updates.rs). -->
+        <button type="button" class="link-button link-button--gold" id="update" hidden></button>
+        <span class="panel__footer-actions">
+          <!-- Propose l'autre langue (« English » quand Glaux est en français). -->
+          <button type="button" class="link-button" id="language">English</button>
+          <button type="button" class="link-button" id="alerts">Alertes : oui</button>
+          <button type="button" class="link-button" id="quit">Quitter</button>
+        </span>
+      </footer>
+    </main>
+
+    <!-- Infobulle maison : les infobulles natives de macOS ne s'affichent pas
+         dans un panneau de barre des menus. Remplie par src/main.ts. -->
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  </body>
+</html>

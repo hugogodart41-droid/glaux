@@ -1,0 +1,47 @@
+[package]
+name = "glaux"
+# Version du code Rust seulement. La version de l'app est dans package.json
+# (lue par tauri.conf.json, changée par publier.command).
+version = "0.1.0"
+description = "Glaux — tableau de bord macro de la zone euro"
+edition = "2021"
+rust-version = "1.90"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon : icône dans la barre des menus / zone de notification
+# image-png : charger l'icône dédiée de la barre des menus (icons/tray.png)
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Téléchargement HTTPS (léger, sans moteur asynchrone) pour l'API de la BCE
+ureq = "3"
+# Lecture des fichiers CSV renvoyés par la BCE
+csv = "1"
+# Dates (« il y a un mois », date du jour)
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Langue du système (français ou anglais par défaut)
+sys-locale = "0.3"
+tauri-plugin-updater = "2"
+
+# Notifications (changement de taux BCE, nouvelle inflation, rappels du jour J) :
+# - Windows et Linux : module de notifications de Tauri ;
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tauri-plugin-notification = "2"
+
+# - Mac : système actuel d'Apple, UNUserNotificationCenter (voir src/macos_notify.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSBundle"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotificationSound"] }
+
+# Version finale : binaire le plus petit possible.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

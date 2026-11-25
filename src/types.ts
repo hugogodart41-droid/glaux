@@ -1,0 +1,44 @@
+import type { Lang } from "./i18n";
+
+// Données reçues du cœur Rust (voir src-tauri/src/store.rs et data.rs).
+
+export type Observation = { date: string; value: number };
+
+export type IndicatorView = {
+  id: string;
+  /** Vrai pour un indicateur calculé par Glaux (taux réel, pente). */
+  derived: boolean;
+  latest: Observation | null;
+  /** Valeur un mois plus tôt (base de la variation). */
+  reference: Observation | null;
+  /** Taux directeur : date d'entrée en vigueur de la valeur actuelle. */
+  since: string | null;
+  /** Mini-courbe : la dernière année, points équidistants. */
+  spark: number[];
+};
+
+/** Dates à venir (« 2026-12-17 »), aujourd'hui compris, définies dans src-tauri/src/agenda.rs. */
+export type AgendaData = { ecb: string[]; hicp: string[] };
+
+export type DashboardView = {
+  indicators: IndicatorView[];
+  /** Dernière actualisation complète réussie (millisecondes). */
+  updatedAt: number | null;
+  refreshing: boolean;
+  error: string | null;
+  agenda: AgendaData;
+  /** Notifications activées. */
+  notifications: boolean;
+  /** Refus ou erreur de macOS pour les notifications (null si tout va bien). */
+  notificationError: string | null;
+  /** Langue de Glaux : langue du système ou choix enregistré. */
+  language: Lang;
+  /** Version installée (ex. « 0.1.0 »). */
+  version: string;
+  /** Nouvelle version disponible (null : à jour). */
+  update: string | null;
+  /** Mise à jour en cours de téléchargement / d'installation. */
+  updating: boolean;
+  /** Échec de la dernière tentative de mise à jour. */
+  updateError: string | null;
+};

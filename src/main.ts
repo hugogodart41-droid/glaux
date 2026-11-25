@@ -1,0 +1,466 @@
+// Interface de Glaux : affiche les données envoyées par le cœur Rust.
+// Rust télécharge et met en cache ; ici, on ne fait que de l'affichage.
+// Deux écrans dans le même panneau : la liste des indicateurs, et la vue détail.
+
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+import { formatCountdown, formatEventDate, upcomingEvents } from "./agenda";
+import { renderDetailChart, renderSparkline } from "./chart";
+import { exportIndicator } from "./export";
+import {
+  IS_MAC,
+  formatChange,
+  formatDateLine,
+  formatFullPeriod,
+  formatUpdate,
+  formatValue,
+} from "./format";
+import { lang, locale, setLang, t } from "./i18n";
+import { displayFor } from "./indicators";
+import { setupTooltips } from "./tooltip";
+import type { DashboardView, IndicatorView, Observation } from "./types";
+
+// ---------- État ----------
+
+/** Dernières données reçues de Rust. */
+let dashboard: DashboardView | null = null;
+/** Indicateur ouvert en vue détail (null : on est sur la liste). */
+let detailId: string | null = null;
+/** Période de la vue détail : 12 (1 an) ou 60 (5 ans). */
+let detailMonths = 60;
+/** Historiques déjà chargés (clé « id:mois »), vidés à chaque actualisation. */
+const historyCache = new Map<string, Observation[]>();
+/** Numéro de la dernière demande d'historique : ignore les réponses arrivées en retard. */
+let detailRequest = 0;
+
+const $ = (id: string) => document.getElementById(id);
+
+/** Crée un élément avec une classe et un texte (jamais de HTML injecté). */
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text = "") {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+// ---------- Liste ----------
+
+function renderRow(indicator: IndicatorView): HTMLLIElement | null {
+  const display = displayFor(indicator.id);
+  if (!display) return null; // indicateur inconnu de l'interface : ignoré
+
+  const row = el("li", "indicator");
+  row.dataset.id = indicator.id;
+
+  // Survol du nom : à quoi sert cet indicateur.
+  const left = el("div", "indicator__left");
+  left.setAttribute("data-tooltip", display.hint);
+  left.append(
+    el("span", "indicator__label", display.label),
+    el("span", "indicator__sub", formatDateLine(indicator, display)),
+  );
+
+  const right = el("div", "indicator__right");
+  const value = indicator.latest ? formatValue(indicator.latest.value, display) : "—";
+  right.append(
+    el("span", "indicator__value", value),
+    el("span", "indicator__sub", formatChange(indicator, display)),
+  );
+
+  row.append(left, renderSparkline(indicator.spark ?? [], display), right);
+  return row;
+}
+
+function renderStatus(view: DashboardView): void {
+  const status = $("status");
+  const refresh = $("refresh");
+  if (!status || !refresh) return;
+
+  const hasData = view.indicators.some((i) => i.latest);
+  const strings = t();
+  let text: string;
+  if (view.refreshing) {
+    text = strings.refreshing;
+  } else if (view.error && view.updatedAt) {
+    const update = formatUpdate(view.updatedAt);
+    text = strings.offlineSince(update.text, update.today);
+  } else if (view.error && hasData) {
+    text = strings.partialData;
+  } else if (view.error) {
+    text = strings.unreachable;
+  } else if (view.updatedAt) {
+    const update = formatUpdate(view.updatedAt);
+    text = strings.updated(update.text, update.today);
+  } else {
+    text = strings.loadingData;
+  }
+
+  status.textContent = text;
+  // Détail technique de l'erreur au survol (utile pour me l'envoyer).
+  if (view.error) status.setAttribute("data-tooltip", view.error);
+  else status.removeAttribute("data-tooltip");
+  refresh.classList.toggle("is-spinning", view.refreshing);
+}
+
+function render(view: DashboardView): void {
+  dashboard = view;
+  // Langue choisie dans Rust (système ou préférence) : textes fixes remis à jour si elle change.
+  if (setLang(view.language)) applyStaticTexts();
+  // Nouvelles données : les historiques en mémoire sont périmés.
+  if (!view.refreshing) historyCache.clear();
+
+  const list = $("indicators");
+  if (list) {
+    const rows: HTMLLIElement[] = [];
+    let sectionShown = false;
+    for (const indicator of view.indicators) {
+      // Intertitre avant le premier indicateur calculé par Glaux.
+      if (indicator.derived && !sectionShown) {
+        sectionShown = true;
+        const section = el("li", "indicators__section", t().derivedSection);
+        section.setAttribute("data-tooltip", t().derivedHint);
+        rows.push(section);
+      }
+      const row = renderRow(indicator);
+      if (row) rows.push(row);
+    }
+    list.replaceChildren(...rows);
+  }
+  renderStatus(view);
+  renderUpdate(view);
+  renderAgenda();
+  renderAlertsToggle(view);
+  document.querySelector(".brand")?.setAttribute("data-tooltip", t().brandHint(view.version));
+  if (detailId && !view.refreshing) void renderDetail();
+}
+
+// ---------- Agenda ----------
+
+/** Bandeau sous l'en-tête : prochaine décision BCE et prochaine inflation. */
+function renderAgenda(): void {
+  const agenda = $("agenda");
+  if (!agenda) return;
+  const items = upcomingEvents(dashboard?.agenda).map((event) => {
+    const item = el("button", `agenda__item agenda__item--${event.kind}`);
+    item.type = "button";
+    item.dataset.indicator = event.indicatorId;
+    item.setAttribute("data-tooltip", event.hint);
+    if (event.daysLeft <= 1) item.classList.add("is-soon"); // aujourd'hui ou demain : en or
+    item.append(
+      el("span", "agenda__label", event.label),
+      el("span", "agenda__when", `${formatEventDate(event.date)} · ${formatCountdown(event.daysLeft)}`),
+    );
+    return item;
+  });
+  agenda.replaceChildren(...items);
+  agenda.hidden = items.length === 0; // calendrier épuisé : bandeau masqué
+}
+
+// ---------- Vue détail ----------
+
+async function loadHistory(id: string, months: number): Promise<Observation[]> {
+  const key = `${id}:${months}`;
+  const cached = historyCache.get(key);
+  if (cached) return cached;
+  const points = await invoke<Observation[]>("get_history", { id, months });
+  historyCache.set(key, points);
+  return points;
+}
+
+function openDetail(id: string): void {
+  detailId = id;
+  $("indicators")?.setAttribute("hidden", "");
+  $("detail")?.removeAttribute("hidden");
+  void renderDetail();
+}
+
+function closeDetail(): void {
+  detailId = null;
+  $("detail")?.setAttribute("hidden", "");
+  $("indicators")?.removeAttribute("hidden");
+}
+
+async function renderDetail(): Promise<void> {
+  const id = detailId;
+  const indicator = dashboard?.indicators.find((i) => i.id === id);
+  const display = id ? displayFor(id) : undefined;
+  if (!id || !indicator || !display) {
+    closeDetail();
+    return;
+  }
+
+  const set = (elementId: string, text: string) => {
+    const node = $(elementId);
+    if (node) node.textContent = text;
+  };
+  set("detail-title", display.label);
+  set("detail-date", formatDateLine(indicator, display));
+  set("detail-value", indicator.latest ? formatValue(indicator.latest.value, display) : "—");
+  set("detail-change", formatChange(indicator, display));
+  set("detail-explain", display.explanation);
+  document.querySelectorAll<HTMLButtonElement>("[data-months]").forEach((button) => {
+    button.classList.toggle("is-active", Number(button.dataset.months) === detailMonths);
+  });
+
+  const months = detailMonths;
+  const request = ++detailRequest;
+  let points: Observation[];
+  try {
+    points = await loadHistory(id, months);
+  } catch (err) {
+    console.error("Historique indisponible :", err);
+    points = [];
+  }
+  if (request !== detailRequest) return; // l'utilisateur a changé d'indicateur ou de période
+
+  const readout = $("detail-readout");
+  const chart = $("detail-chart");
+  if (!readout || !chart) return;
+
+  // Texte par défaut sous la période : plus bas et plus haut ; au survol : le point visé.
+  const values = points.map((p) => p.value);
+  const range = values.length
+    ? t().range(formatValue(Math.min(...values), display), formatValue(Math.max(...values), display))
+    : t().noHistory;
+  readout.textContent = range;
+
+  const onHover = (point: Observation | null) => {
+    readout.textContent = point
+      ? t().readout(formatFullPeriod(point.date, display.monthly), formatValue(point.value, display))
+      : range;
+  };
+  // La courbe prend toute la place libre du panneau.
+  const width = chart.clientWidth || 364;
+  const height = Math.max(150, chart.clientHeight || 150);
+  chart.replaceChildren(renderDetailChart(points, display, months, width, height, onHover));
+}
+
+async function exportCurrent(): Promise<void> {
+  const button = $("export");
+  const id = detailId;
+  const indicator = dashboard?.indicators.find((i) => i.id === id);
+  const display = id ? displayFor(id) : undefined;
+  if (!button || !id || !indicator || !display || button.dataset.busy) return;
+
+  button.dataset.busy = "1";
+  button.textContent = t().exporting;
+  try {
+    const points = await loadHistory(id, detailMonths);
+    const path = await exportIndicator(indicator, display, points, detailMonths, dashboard?.agenda);
+    button.textContent = t().exported;
+    button.setAttribute("data-tooltip", path);
+  } catch (err) {
+    console.error("Export impossible :", err);
+    button.textContent = t().exportFailed;
+    button.setAttribute("data-tooltip", String(err));
+  }
+  window.setTimeout(() => {
+    delete button.dataset.busy;
+    applyExportButton(); // texte d'origine, dans la langue du moment
+  }, 3000);
+}
+
+// ---------- Alertes (notifications) ----------
+
+function renderAlertsToggle(view: DashboardView): void {
+  const button = $("alerts");
+  if (!button) return;
+  // Activées dans Glaux mais refusées par macOS : on le dit, avec la raison au survol.
+  const blocked = view.notifications && !!view.notificationError;
+  const strings = t();
+  button.textContent = blocked ? strings.alertsBlocked : view.notifications ? strings.alertsOn : strings.alertsOff;
+  button.classList.toggle("is-off", !view.notifications);
+  button.classList.toggle("is-blocked", blocked);
+  button.setAttribute(
+    "data-tooltip",
+    blocked ? (view.notificationError ?? "") : view.notifications ? strings.alertsOnHint : strings.alertsOffHint,
+  );
+}
+
+function toggleAlerts(): void {
+  if (!dashboard) return;
+  // Rust enregistre le choix puis renvoie la vue à jour (événement dashboard-updated).
+  invoke("set_notifications", { enabled: !dashboard.notifications }).catch((err) =>
+    console.error("Réglage des alertes impossible :", err),
+  );
+}
+
+// ---------- Mise à jour de Glaux ----------
+
+/** Nouvelle version disponible : un bouton en or remplace le statut, en bas à gauche. */
+function renderUpdate(view: DashboardView): void {
+  const button = $("update") as HTMLButtonElement | null;
+  const status = $("status");
+  if (!button || !status) return;
+  const version = view.update;
+  button.hidden = !version;
+  status.hidden = !!version;
+  if (!version) return;
+  const strings = t();
+  button.disabled = view.updating;
+  button.textContent = view.updating ? strings.updating : strings.installUpdate(version);
+  button.setAttribute(
+    "data-tooltip",
+    view.updateError ? strings.updateFailed(view.updateError) : strings.installUpdateHint(version),
+  );
+}
+
+function installUpdate(): void {
+  // Rust télécharge, vérifie la signature, installe puis relance Glaux.
+  invoke("install_update").catch((err) => console.error("Mise à jour impossible :", err));
+}
+
+// ---------- Langue ----------
+
+function toggleLanguage(): void {
+  // Rust enregistre le choix, traduit le menu de l'icône et renvoie la vue (événement dashboard-updated).
+  invoke("set_language", { language: lang() === "fr" ? "en" : "fr" }).catch((err) =>
+    console.error("Changement de langue impossible :", err),
+  );
+}
+
+/** Raccourci clavier affiché dans les infobulles : « ⌘R » sur Mac, « Ctrl+R » sous Windows. */
+function keys(key: string): string {
+  return `${IS_MAC ? "⌘" : "Ctrl+"}${key}`;
+}
+
+function applyExportButton(): void {
+  const button = $("export");
+  if (!button || button.dataset.busy) return; // export en cours : son texte sera remis à la fin
+  button.textContent = t().exportImage;
+  button.setAttribute("data-tooltip", t().exportHint(keys("E")));
+}
+
+/** Textes fixes du panneau (index.html), remis à chaque changement de langue. */
+function applyStaticTexts(): void {
+  const strings = t();
+  const set = (selector: string, text: string, tooltip?: string) => {
+    const node = document.querySelector<HTMLElement>(selector);
+    if (!node) return;
+    node.textContent = text;
+    if (tooltip) node.setAttribute("data-tooltip", tooltip);
+  };
+  set(".brand__tagline", strings.tagline);
+  set("#back", strings.back, strings.backHint);
+  set('[data-months="12"]', strings.oneYear);
+  set('[data-months="60"]', strings.fiveYears);
+  set("#quit", strings.quit, strings.quitHint(keys("Q")));
+  set("#language", strings.switchLanguage, strings.switchLanguageHint);
+  applyExportButton();
+
+  const refresh = $("refresh");
+  refresh?.setAttribute("aria-label", strings.refresh);
+  refresh?.setAttribute("data-tooltip", strings.refreshHint(keys("R")));
+  $("agenda")?.setAttribute("aria-label", strings.agendaAria);
+  $("indicators")?.setAttribute("aria-label", strings.indicatorsAria);
+  document.querySelector(".segmented")?.setAttribute("aria-label", strings.periodAria);
+  renderToday();
+}
+
+// ---------- Actions ----------
+
+function quitApp(): void {
+  invoke("quit_app").catch((err) => console.error("Impossible de quitter :", err));
+}
+
+function refreshNow(): void {
+  invoke("refresh_now").catch((err) => console.error("Actualisation impossible :", err));
+}
+
+function setupButtons(): void {
+  $("quit")?.addEventListener("click", quitApp);
+  $("refresh")?.addEventListener("click", refreshNow);
+  $("language")?.addEventListener("click", toggleLanguage);
+  $("update")?.addEventListener("click", installUpdate);
+
+  // Clic sur une ligne de la liste : vue détail (un seul écouteur pour toutes les lignes).
+  $("indicators")?.addEventListener("click", (event) => {
+    const row = (event.target as Element | null)?.closest<HTMLElement>(".indicator");
+    if (row?.dataset.id) openDetail(row.dataset.id);
+  });
+
+  // Clic sur un événement de l'agenda : vue détail de l'indicateur concerné.
+  $("agenda")?.addEventListener("click", (event) => {
+    const item = (event.target as Element | null)?.closest<HTMLElement>(".agenda__item");
+    if (item?.dataset.indicator) openDetail(item.dataset.indicator);
+  });
+
+  $("alerts")?.addEventListener("click", toggleAlerts);
+
+  $("back")?.addEventListener("click", closeDetail);
+  $("export")?.addEventListener("click", () => void exportCurrent());
+
+  document.querySelectorAll<HTMLButtonElement>("[data-months]").forEach((button) => {
+    button.addEventListener("click", () => {
+      detailMonths = Number(button.dataset.months) || 60;
+      void renderDetail();
+    });
+  });
+}
+
+// Échap : retour à la liste, ou ferme le panneau. ⌘Q quitte, ⌘R actualise, ⌘E exporte.
+function listenForShortcuts(): void {
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (detailId) {
+        closeDetail();
+        return;
+      }
+      getCurrentWindow()
+        .hide()
+        .catch((err) => console.error("Impossible de masquer la fenêtre :", err));
+      return;
+    }
+    const modifier = IS_MAC ? event.metaKey : event.ctrlKey;
+    if (!modifier) return;
+    const key = event.key.toLowerCase();
+    if (key === "q") {
+      event.preventDefault();
+      quitApp();
+    } else if (key === "r") {
+      event.preventDefault(); // évite le rechargement de la page web
+      refreshNow();
+    } else if (key === "e" && detailId) {
+      event.preventDefault();
+      void exportCurrent();
+    }
+  });
+}
+
+function renderToday(): void {
+  const node = $("today");
+  if (!node) return;
+  node.textContent = new Intl.DateTimeFormat(locale(), {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(new Date());
+}
+
+// ---------- Démarrage ----------
+
+async function start(): Promise<void> {
+  applyStaticTexts();
+  setupButtons();
+  setupTooltips();
+  listenForShortcuts();
+
+  // 1. Nouvelles données envoyées par Rust (actualisation auto ou manuelle).
+  await listen<DashboardView>("dashboard-updated", (event) => render(event.payload));
+
+  // 2. Données déjà en cache : affichage immédiat, même hors ligne.
+  render(await invoke<DashboardView>("get_dashboard"));
+
+  // La date du jour change si le Mac reste allumé : date et compte à rebours
+  // sont remis à jour à chaque ouverture du panneau.
+  window.addEventListener("focus", () => {
+    renderToday();
+    renderAgenda();
+  });
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  start().catch((err) => console.error("Démarrage de l'interface impossible :", err));
+});

@@ -1,0 +1,13 @@
+# Installé ou généré à la compilation
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+
+# Ne jamais publier : anciens fichiers, archives, clés, secrets
+_to_delete/
+*.zip
+*.key
+*.key.pub
+.env

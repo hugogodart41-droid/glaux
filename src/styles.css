@@ -1,0 +1,477 @@
+/* Identité visuelle de Glaux : bleu nuit, blanc cassé, accent or
+   (même palette que la note macro). */
+:root {
+  --nuit: #0e1a2b;
+  --nuit-clair: #16263d;
+  --ligne: #22344f;
+  --creme: #f5f1e8;
+  --creme-doux: #b9b4a8;
+  --or: #c9a24a;
+
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--nuit);
+  color: var(--creme);
+  /* Un panneau de barre des menus ne se sélectionne pas comme une page web. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--ligne);
+}
+
+.panel__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--ligne);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.brand__name {
+  font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--or);
+}
+
+.brand__tagline,
+.panel__date {
+  font-size: 12px;
+  color: var(--creme-doux);
+}
+
+/* ---------- Agenda ---------- */
+
+.agenda {
+  display: flex;
+  border-bottom: 1px solid var(--ligne);
+}
+
+.agenda[hidden] {
+  display: none;
+}
+
+.agenda__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 7px 18px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.agenda__item + .agenda__item {
+  border-left: 1px solid var(--ligne);
+}
+
+.agenda__item:hover {
+  background: var(--nuit-clair);
+}
+
+.agenda__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--creme-doux);
+}
+
+.agenda__when {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Aujourd'hui ou demain : mis en avant. */
+.agenda__item.is-soon .agenda__when {
+  color: var(--or);
+  font-weight: 600;
+}
+
+.indicators {
+  list-style: none;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--ligne);
+}
+
+.indicator {
+  cursor: pointer;
+}
+
+/* Intertitre « Calculés par Glaux » avant le taux réel et la pente. */
+.indicators__section {
+  padding: 10px 18px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--or);
+  border-bottom: 1px solid var(--ligne);
+}
+
+.indicator:hover {
+  background: var(--nuit-clair);
+}
+
+/* Deux lignes par indicateur : nom + date à gauche, valeur + variation à droite. */
+.indicator__left,
+.indicator__right {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Le nom prend la place libre ; la mini-courbe et la valeur gardent leur largeur
+   (largeur fixe à droite : les mini-courbes sont alignées en colonne). */
+.indicator__left {
+  flex: 1;
+}
+
+.indicator__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.indicator__right {
+  flex: 0 0 auto;
+  width: 120px;
+}
+
+/* Mini-courbe d'un an, entre le nom et la valeur. */
+.spark {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.spark__line {
+  fill: none;
+  stroke: var(--or);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark__dot {
+  fill: var(--or);
+}
+
+.indicator__right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.indicator__label {
+  font-size: 14px;
+}
+
+.indicator__value {
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--creme);
+}
+
+.indicator__sub {
+  font-size: 11px;
+  color: var(--creme-doux);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.panel__actions {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* Bouton rond « ↻ » (actualiser) ; tourne pendant le téléchargement. */
+.icon-button {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--creme-doux);
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.icon-button:hover,
+.icon-button:focus-visible {
+  color: var(--or);
+  outline: none;
+}
+
+.icon-button.is-spinning {
+  color: var(--or);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.panel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 18px;
+  font-size: 11px;
+  color: var(--creme-doux);
+}
+
+.panel__footer-actions {
+  display: flex;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+#status,
+#update {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* « Alertes : non » : atténué. « Alertes : bloquées » (refus de macOS) : en or. */
+.link-button.is-off {
+  opacity: 0.6;
+}
+
+.link-button.is-blocked {
+  color: var(--or);
+}
+
+/* Bouton discret, style lien (ex. « Quitter » en bas du panneau). */
+.link-button {
+  font: inherit;
+  color: var(--creme-doux);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.link-button:hover,
+.link-button:focus-visible {
+  color: var(--or);
+  outline: none;
+}
+
+/* Infobulle maison (voir setupTooltips dans src/main.ts). */
+.tooltip {
+  position: fixed;
+  z-index: 10;
+  max-width: 260px;
+  padding: 6px 9px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--creme);
+  background: #1c2e47;
+  border: 1px solid rgba(201, 162, 74, 0.45);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.tooltip[hidden] {
+  display: none;
+}
+
+/* ---------- Vue détail ---------- */
+
+.detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 8px 18px 4px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ligne);
+}
+
+.detail[hidden],
+.indicators[hidden] {
+  display: none;
+}
+
+.detail__bar,
+.detail__head,
+.detail__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detail__head {
+  align-items: flex-end;
+}
+
+.detail__left,
+.detail__right {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detail__right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.detail__title {
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail__value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--or);
+}
+
+.detail__readout {
+  font-size: 11px;
+  color: var(--creme-doux);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* La courbe occupe la hauteur libre ; l'explication reste toujours visible. */
+.detail__chart {
+  flex: 1;
+  min-height: 150px;
+  overflow: hidden;
+}
+
+.detail__chart .chart {
+  display: block;
+}
+
+.detail__explain {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--creme-doux);
+}
+
+.link-button--gold {
+  color: var(--or);
+}
+
+/* Choix de période « 1 an / 5 ans ». */
+.segmented {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--ligne);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--creme-doux);
+  background: none;
+  border: none;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--ligne);
+}
+
+.segmented button.is-active {
+  color: var(--or);
+  background: var(--nuit-clair);
+}
+
+/* Courbe de la vue détail (voir renderDetailChart dans src/chart.ts). */
+.chart__grid {
+  stroke: var(--ligne);
+  stroke-width: 1;
+}
+
+.chart__label {
+  fill: var(--creme-doux);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__line {
+  fill: none;
+  stroke: var(--or);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart__cursor {
+  stroke: var(--creme-doux);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.chart__dot {
+  fill: var(--or);
+  stroke: var(--nuit);
+  stroke-width: 1.5;
+}

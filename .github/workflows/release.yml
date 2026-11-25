@@ -1,0 +1,77 @@
+# Publie une version de Glaux : Mac (puce Apple et Intel) et Windows.
+#
+# Déclenchée par l'envoi d'une étiquette de version (ex. v0.1.1), créée par publier.command
+# (`npm version patch` puis `git push --follow-tags`).
+# Résultat : une version « brouillon » dans l'onglet Releases du dépôt, avec les installeurs
+# et latest.json (lu par les mises à jour automatiques). Rien n'est visible ni proposé aux
+# utilisateurs tant que le brouillon n'est pas publié à la main.
+#
+# Secrets du dépôt (créés par premiere-mise-en-ligne.command) :
+#   TAURI_SIGNING_PRIVATE_KEY          clé privée qui signe les mises à jour
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD son mot de passe
+# Signature Mac : voir LISEZMOI.md (section « Publier une version »).
+name: Publier une version
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  publier:
+    permissions:
+      contents: write # créer la version et y déposer les fichiers
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # Mac à puce Apple (M1 et suivants)
+            args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json
+          - platform: macos-latest # Mac Intel
+            args: --target x86_64-apple-darwin --config src-tauri/tauri.release.conf.json
+          - platform: windows-latest
+            args: --config src-tauri/tauri.release.conf.json
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ strategy.job-index }}
+
+      - run: npm ci
+
+      # On ne publie rien si un test échoue.
+      - name: Tests
+        run: |
+          npm run build
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Glaux v__VERSION__
+          releaseBody: |
+            **Which file? / Quel fichier ?**
+            - Mac with Apple chip (M1 and later) / Mac à puce Apple : `Glaux_…_aarch64.dmg`
+            - Intel Mac / Mac Intel : `Glaux_…_x64.dmg`
+            - Windows : `Glaux_…_x64-setup.exe`
+
+            First launch / Premier lancement : see the [README](https://github.com/${{ github.repository }}#install).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
