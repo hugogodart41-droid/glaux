@@ -1,4 +1,4 @@
-# Publie une version de Glaux : Mac (puce Apple et Intel) et Windows.
+# Publie une version de Glaux : Mac (un seul fichier, puce Apple et Intel) et Windows.
 #
 # Déclenchée par l'envoi d'une étiquette de version (ex. v0.1.1), créée par publier.command
 # (`npm version patch` puis `git push --follow-tags`).
@@ -25,10 +25,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest # Mac à puce Apple (M1 et suivants)
-            args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json
-          - platform: macos-latest # Mac Intel
-            args: --target x86_64-apple-darwin --config src-tauri/tauri.release.conf.json
+          # Mac : app « universelle » (puce Apple et Intel dans un seul fichier). latest.json
+          # la propose aux deux familles de Mac (darwin-aarch64 et darwin-x86_64).
+          - platform: macos-latest
+            args: --target universal-apple-darwin --config src-tauri/tauri.release.conf.json
           - platform: windows-latest
             args: --config src-tauri/tauri.release.conf.json
     runs-on: ${{ matrix.platform }}
@@ -67,8 +67,7 @@ jobs:
           releaseName: Glaux v__VERSION__
           releaseBody: |
             **Which file? / Quel fichier ?**
-            - Mac with Apple chip (M1 and later) / Mac à puce Apple : `Glaux_…_aarch64.dmg`
-            - Intel Mac / Mac Intel : `Glaux_…_x64.dmg`
+            - Mac (Apple chip or Intel) / Mac (puce Apple ou Intel) : `Glaux_…_universal.dmg`
             - Windows : `Glaux_…_x64-setup.exe`
 
             First launch / Premier lancement : see the [README](https://github.com/${{ github.repository }}#install).

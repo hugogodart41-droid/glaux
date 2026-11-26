@@ -30,8 +30,7 @@ Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes
 3 semaines après la fin du mois). La BCE ne publie pas de taux quotidien par pays.
 - Zone euro ou par pays (V3) : inflation (totale, sous-jacente, services) et chômage existent aussi pour les
   8 pays (`BY_COUNTRY` dans `ecb.rs` : mêmes clés BCE, `U2` remplacé par le code pays, ex.
-  `HICP.M.FR.N.000000.4D0.ANR`). Une requête par indicateur ramène les 8 pays (clé « DE+FR+… », colonne
-  `REF_AREA`) : la BCE met ~2 s à répondre quelle que soit la taille, d'où 4 requêtes au lieu de 32.
+  `HICP.M.FR.N.000000.4D0.ANR`), téléchargés avec la zone euro (voir « Téléchargement »).
   Dans la vue détail, des pastilles « ZE DE FR IT… » choisissent la zone euro ou un pays : la ligne du panneau
   affiche alors ce pays (« France · oct. 2026 ») et la courbe de la zone euro reste en pointillés pour
   comparer (vue détail et image exportée). Choix enregistré dans prefs.json (`countries`, commande
@@ -56,7 +55,21 @@ Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en ca
 - À ne pas confondre : « Taux souverain 10 ans » (`yield_10y`) = échantillon `G_N_C`, toutes notations (taux
   moyen de la zone euro, plus élevé que le 10 ans AAA : 3,93 % contre 3,31 % le 24/11/2026).
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
-Téléchargement : 4 requêtes à la fois (`PARALLEL_DOWNLOADS`) : 30 séries, plus 4 requêtes par pays (32 séries).
+Téléchargement : 62 séries en 12 requêtes (`ecb::downloads`), 4 à la fois (`PARALLEL_DOWNLOADS`). La BCE met
+~2 s à répondre quelle que soit la taille : les séries dont les clés ne diffèrent que par une dimension partent
+ensemble (`combined_key` : « HICP.M.U2+DE+FR+….N.000000.4D0.ANR », courbe « …SR_3M+SR_6M+… », taux par pays,
+crédit) ; la réponse est triée par la colonne `KEY`. Le taux de dépôt reste seul (requête de la valeur d'avant).
+
+## Agenda (décisions BCE, inflation flash)
+
+Bandeau sous l'en-tête et rappels du jour J. Calendrier en vigueur (`Calendar` dans `src-tauri/src/agenda.rs`) :
+- dates intégrées à l'app (jusqu'à janvier 2028) ;
+- remplacées par celles du fichier **`agenda.json`** à la racine du dépôt GitHub, lu à chaque actualisation
+  (adresse `raw.githubusercontent.com/…/main/agenda.json`), dès qu'il va plus loin ou corrige une date ;
+  copie locale `agenda.json` dans le dossier de données de Glaux (hors ligne). Fichier invalide : ignoré.
+- **Chaque année** : ajouter les nouvelles dates dans `agenda.json` (sources dans le fichier), puis
+  `git add agenda.json && git commit -m "Calendrier 2028" && git push` : toutes les apps installées les
+  reçoivent, sans nouvelle version. Les dates intégrées, elles, se mettent à jour avec la version suivante.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
 Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache.
@@ -143,12 +156,18 @@ Bouton « Alertes : oui/non » en bas du panneau (« Alertes : bloquées » si m
   passe par une API dépréciée depuis macOS 11 qui ne délivre plus rien sur les macOS récents.
   Fonctionne dans l'app compilée (Glaux.app, signée « ad hoc ») ; en mode développement, repli sur `osascript`
   (notification au nom de « Éditeur de script »).
+- **Clic sur une notification (Mac, app compilée)** : le panneau s'ouvre sur l'indicateur concerné (taux de dépôt
+  ou inflation). L'indicateur voyage dans l'identifiant de la notification (« glaux-hicp-3 ») ; un délégué
+  (`NotificationDelegate`) le transmet à Rust, qui le garde (`take_pending_open`) et prévient l'interface
+  (événement `open-indicator`) : ça marche aussi quand le clic relance Glaux.
 - **Windows / Linux** : module de notifications de Tauri.
 
 ## Mises à jour automatiques
 
-Module « updater » de Tauri (`src-tauri/src/updates.rs`). Glaux vérifie au lancement puis une fois par jour
-le fichier `latest.json` de la dernière version publiée sur GitHub. Si une version plus récente existe,
+Module « updater » de Tauri (`src-tauri/src/updates.rs`). Glaux vérifie au lancement, toutes les 6 h et au réveil
+de l'ordinateur (si la dernière vérification date d'au moins 1 h) le fichier `latest.json` de la dernière version
+publiée sur GitHub. Le réveil se repère à l'heure réelle : le fil d'arrière-plan tourne toutes les 5 min, un écart
+bien plus grand entre deux tours signale une mise en veille. Si une version plus récente existe,
 « Installer la vX.Y.Z » remplace le statut en bas du panneau ; un clic télécharge, vérifie la signature,
 installe et relance. Rien ne s'installe sans clic. Pas de vérification en mode développement.
 
@@ -159,8 +178,8 @@ installe et relance. Rien ne s'installe sans clic. Pas de vérification en mode 
 
 ## Publier une version
 
-Sur GitHub (dépôt public, compilation gratuite) : `.github/workflows/release.yml` compile Mac (puce Apple + Intel)
-et Windows à chaque étiquette `vX.Y.Z`, et prépare un **brouillon** de version avec les installeurs et `latest.json`.
+Sur GitHub (dépôt public, compilation gratuite) : `.github/workflows/release.yml` compile Mac (app universelle :
+puce Apple et Intel dans un seul DMG, `--target universal-apple-darwin`) et Windows à chaque étiquette `vX.Y.Z`, et prépare un **brouillon** de version avec les installeurs et `latest.json`.
 Les utilisateurs ne voient rien tant que le brouillon n'est pas publié.
 
 ```bash
@@ -184,7 +203,8 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/src/main.rs` | Icône de la barre des menus, panneau (position, hauteur), commandes appelées par l'interface, fil d'actualisation |
 | `src-tauri/src/ecb.rs` | Les 6 séries BCE, téléchargement et lecture du CSV |
 | `src-tauri/src/data.rs` | Calculs : dernière valeur, variation sur 1 mois, mini-courbe, historique, taux réel, pente |
-| `src-tauri/src/agenda.rs` | Dates officielles des décisions BCE et des inflations flash (**à mettre à jour chaque année**, liens dans le fichier) et rappels du jour J |
+| `src-tauri/src/agenda.rs` | Calendrier des décisions BCE et des inflations flash (dates intégrées + `agenda.json` publié) et rappels du jour J |
+| `agenda.json` | Calendrier publié, lu par les apps installées (**à compléter chaque année**) |
 | `src-tauri/src/macos_notify.rs` | Notifications Mac (UNUserNotificationCenter, repli osascript en mode dev) |
 | `src-tauri/src/alerts.rs` | Textes des notifications : changement de taux BCE, nouvelle inflation |
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
@@ -222,4 +242,5 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 8. FR/EN, mises à jour automatiques, Windows, version publiée (v0.1.0)
 9. V2 : écarts de taux par pays, formats d'image + copier, export Excel, choix et ordre des indicateurs (v0.2.0)
 10. V3 : plus de données BCE, courbe des taux AAA, panneau agrandi, rubriques et indicateurs par pays (v0.3.0),
-    carrousel LinkedIn ← **ici** ; ensuite : fiabilité (DMG universel, calendrier automatique)
+    carrousel LinkedIn, fiabilité (DMG universel, calendrier publié, clic sur notification, mises à jour
+    toutes les 6 h, actualisation 2,5 fois plus rapide) ← **ici** (v0.4.0)

@@ -8,19 +8,25 @@
 // UNUserNotificationCenter ne fonctionne que dans une app empaquetée (Glaux.app).
 // En mode développement (`npm run tauri dev`, binaire hors .app), on se rabat sur
 // `osascript` : la notification s'affiche au nom de « Éditeur de script ».
+//
+// Clic sur une notification : un « délégué » (objet que macOS prévient) lit l'indicateur
+// glissé dans l'identifiant de la notification (« glaux-hicp-3 ») et ouvre le panneau dessus.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use crate::i18n::Lang;
 
-use block2::RcBlock;
-use objc2::runtime::Bool;
+use block2::{DynBlock, RcBlock};
+use objc2::rc::Retained;
+use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, msg_send, AllocAnyThread};
 use objc2_foundation::{NSBundle, NSError, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
-    UNNotificationSound, UNUserNotificationCenter,
+    UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
+    UNUserNotificationCenterDelegate,
 };
 
 /// Numéro des notifications (identifiant unique pour macOS).
@@ -115,8 +121,75 @@ pub fn request_authorization() {
     );
 }
 
+/// Indicateurs qu'un clic sur une notification peut ouvrir.
+const CLICKABLE: [&str; 2] = ["deposit_rate", "hicp"];
+
+/// Identifiant d'une notification : « glaux-{indicateur}-{numéro} » (« glaux-info-4 » sans
+/// indicateur). Unique pour macOS, et porteur de l'indicateur à ouvrir au clic.
+fn notification_id(indicator: Option<&str>, number: u64) -> String {
+    format!("glaux-{}-{number}", indicator.unwrap_or("info"))
+}
+
+/// Indicateur à ouvrir d'après l'identifiant d'une notification (None : panneau seul).
+fn indicator_of(id: &str) -> Option<&'static str> {
+    let (indicator, _) = id.strip_prefix("glaux-")?.rsplit_once('-')?;
+    CLICKABLE.iter().copied().find(|c| *c == indicator)
+}
+
+/// Action au clic sur une notification (indicateur à ouvrir, ou None).
+type ClickHandler = Box<dyn Fn(Option<&'static str>) + Send + Sync>;
+static ON_CLICK: OnceLock<ClickHandler> = OnceLock::new();
+
+define_class!(
+    // SAFETY : NSObject n'impose rien à ses sous-classes ; pas de Drop.
+    #[unsafe(super(NSObject))]
+    #[name = "GlauxNotificationDelegate"]
+    struct NotificationDelegate;
+
+    unsafe impl NSObjectProtocol for NotificationDelegate {}
+
+    unsafe impl UNUserNotificationCenterDelegate for NotificationDelegate {
+        /// Clic sur une notification de Glaux (ou sur « Afficher ») : ouvre le panneau.
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &DynBlock<dyn Fn()>,
+        ) {
+            let id = response.notification().request().identifier().to_string();
+            if let Some(on_click) = ON_CLICK.get() {
+                on_click(indicator_of(&id));
+            }
+            completion.call(()); // macOS attend cet appel une fois la réponse traitée
+        }
+    }
+);
+
+impl NotificationDelegate {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(());
+        // SAFETY : `init` de NSObject, sur un objet tout juste alloué.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// Enregistre l'action à faire au clic sur une notification (à appeler au lancement, avant
+/// toute notification : un clic peut aussi relancer Glaux).
+pub fn on_click(handler: impl Fn(Option<&'static str>) + Send + Sync + 'static) {
+    if !running_from_app_bundle() || ON_CLICK.set(Box::new(handler)).is_err() {
+        return;
+    }
+    let delegate = NotificationDelegate::new();
+    UNUserNotificationCenter::currentNotificationCenter()
+        .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    // macOS ne garde qu'une référence faible au délégué : on le garde en vie pour toujours.
+    std::mem::forget(delegate);
+}
+
 /// Affiche une notification (sans attendre : macOS la traite en arrière-plan).
-pub fn show(title: &str, body: &str) {
+/// `indicator` : ouvert dans le panneau si l'on clique dessus.
+pub fn show(title: &str, body: &str, indicator: Option<&str>) {
     if !running_from_app_bundle() {
         show_with_osascript(title, body);
         return;
@@ -127,7 +200,7 @@ pub fn show(title: &str, body: &str) {
     content.setBody(&NSString::from_str(body));
     content.setSound(Some(&UNNotificationSound::defaultSound()));
 
-    let id = format!("glaux-{}", COUNTER.fetch_add(1, Ordering::Relaxed));
+    let id = notification_id(indicator, COUNTER.fetch_add(1, Ordering::Relaxed));
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
         &NSString::from_str(&id),
         &content,
@@ -163,7 +236,7 @@ fn applescript_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Mode développement : notification via AppleScript.
+/// Mode développement : notification via AppleScript (pas d'action au clic).
 fn show_with_osascript(title: &str, body: &str) {
     let script = format!(
         "display notification {} with title {}",
@@ -176,7 +249,21 @@ fn show_with_osascript(title: &str, body: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::applescript_string;
+    use super::{applescript_string, indicator_of, notification_id};
+
+    #[test]
+    fn identifiant_porte_l_indicateur() {
+        assert_eq!(notification_id(Some("hicp"), 3), "glaux-hicp-3");
+        assert_eq!(indicator_of("glaux-hicp-3"), Some("hicp"));
+        assert_eq!(
+            indicator_of(&notification_id(Some("deposit_rate"), 12)),
+            Some("deposit_rate")
+        );
+        assert_eq!(indicator_of(&notification_id(None, 4)), None); // « glaux-info-4 »
+        assert_eq!(indicator_of("glaux-7"), None); // ancien format
+        assert_eq!(indicator_of("autre-hicp-1"), None);
+        assert_eq!(indicator_of("glaux-eurusd-1"), None); // pas ouvrable au clic
+    }
 
     #[test]
     fn echappement_applescript() {

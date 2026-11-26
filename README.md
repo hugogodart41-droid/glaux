@@ -31,8 +31,7 @@ Download the latest version from [Releases](../../releases/latest):
 
 | Computer | File |
 |---|---|
-| Mac with Apple chip (M1 and later) | `Glaux_x.y.z_aarch64.dmg` |
-| Intel Mac | `Glaux_x.y.z_x64.dmg` |
+| Mac (Apple chip or Intel) | `Glaux_x.y.z_universal.dmg` |
 | Windows 10 or 11 | `Glaux_x.y.z_x64-setup.exe` |
 
 Mac: macOS 14 Sonoma or later.
@@ -53,7 +52,7 @@ On first install, Windows SmartScreen may show "Windows protected your PC": clic
 ## Privacy
 
 - No account, no analytics, no tracking.
-- Glaux only connects to the ECB Data Portal (data, at most every 6 hours) and to GitHub (once a day, to check whether a new version exists).
+- Glaux only connects to the ECB Data Portal (data, at most every 6 hours) and to GitHub (every 6 hours, to check whether a new version exists and to read the ECB and inflation release calendar).
 - Data and settings stay on your computer.
 
 ## Build from source

@@ -60,10 +60,19 @@ const MIN_PANEL_HEIGHT: f64 = 160.0;
 const MIN_PANEL_WIDTH: f64 = 400.0;
 
 /// Fréquence à laquelle le fil d'arrière-plan vérifie si les données sont trop vieilles.
-const CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// Écart (heure réelle) entre deux tours du fil au-delà duquel le système sortait de veille :
+/// pendant la veille, le fil est suspendu mais l'horloge avance.
+const WAKE_GAP: Duration = Duration::from_secs(15 * 60);
 
 /// Nom de l'événement envoyé à l'interface quand les données changent.
 const DASHBOARD_EVENT: &str = "dashboard-updated";
+
+/// Événement envoyé à l'interface après un clic sur une notification : elle demande alors
+/// l'indicateur à ouvrir (`take_pending_open`). Mac seulement.
+#[cfg(target_os = "macos")]
+const OPEN_EVENT: &str = "open-indicator";
 
 /// État partagé de l'app.
 struct PanelState {
@@ -72,6 +81,9 @@ struct PanelState {
     /// Position et taille de l'icône à l'écran (en pixels physiques),
     /// mises à jour à chaque survol ou clic sur l'icône.
     tray_rect: Mutex<Option<(PhysicalPosition<f64>, PhysicalSize<f64>)>>,
+    /// Indicateur à ouvrir (clic sur une notification), en attente que l'interface le lise :
+    /// au lancement de Glaux par ce clic, elle n'est pas encore prête à recevoir l'événement.
+    pending_open: Mutex<Option<&'static str>>,
 }
 
 /// Mémorise où se trouve l'icône, pour placer le panneau juste à côté.
@@ -521,6 +533,7 @@ fn set_notifications(app: AppHandle, enabled: bool) -> Result<(), String> {
                             "ECB decisions, new inflation figures and same-day reminders.",
                         )
                         .into(),
+                    indicator: None,
                 }],
             );
             // Le temps que macOS réponde (autorisation, envoi), puis on met le panneau à jour :
@@ -553,6 +566,25 @@ fn set_layout(app: AppHandle, order: Vec<String>, hidden: Vec<String>) -> Result
     app.state::<Store>().set_layout(&order, &hidden)?;
     notify(&app);
     Ok(())
+}
+
+/// Indicateur à ouvrir après un clic sur une notification (une seule fois), ou rien.
+#[tauri::command]
+fn take_pending_open(panel: State<'_, PanelState>) -> Option<&'static str> {
+    panel.pending_open.lock().ok().and_then(|mut p| p.take())
+}
+
+/// Clic sur une notification (Mac) : panneau ouvert, sur l'indicateur concerné s'il y en a un.
+#[cfg(target_os = "macos")]
+fn open_from_notification(app: &AppHandle, indicator: Option<&'static str>) {
+    if let Ok(mut pending) = app.state::<PanelState>().pending_open.lock() {
+        *pending = indicator;
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        show_panel(&handle);
+        let _ = handle.emit(OPEN_EVENT, ());
+    });
 }
 
 /// Courbe des taux du jour et celle de `months` mois plus tôt (vue détail, image exportée).
@@ -624,7 +656,7 @@ fn send_alerts(app: &AppHandle, alerts: &[Alert]) {
     for alert in alerts {
         // Mac : système natif d'Apple (le module Tauri n'y fonctionne plus).
         #[cfg(target_os = "macos")]
-        macos_notify::show(&alert.title, &alert.body);
+        macos_notify::show(&alert.title, &alert.body, alert.indicator);
 
         // Windows et Linux : module de notifications de Tauri.
         #[cfg(not(target_os = "macos"))]
@@ -705,6 +737,7 @@ fn main() {
             set_selection,
             set_country,
             get_curve,
+            take_pending_open,
             resize_panel,
             install_update,
             quit_app
@@ -712,6 +745,7 @@ fn main() {
         .manage(PanelState {
             last_hidden: Mutex::new(None),
             tray_rect: Mutex::new(None),
+            pending_open: Mutex::new(None),
         })
         .setup(|app| {
             // Mac : pas d'icône dans le Dock ni dans ⌘+Tab (en plus de Info.plist).
@@ -728,23 +762,39 @@ fn main() {
             if app.state::<Store>().notifications_enabled() {
                 macos_notify::request_authorization();
             }
+            // Mac : clic sur une notification de Glaux → panneau ouvert sur l'indicateur.
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                macos_notify::on_click(move |indicator| open_from_notification(&handle, indicator));
+            }
 
             // Fil d'arrière-plan : télécharge au démarrage si besoin, puis vérifie
-            // toutes les 15 min si les données ont plus de 6 h.
+            // toutes les 5 min si les données ont plus de 6 h.
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("glaux-actualisation".into())
-                .spawn(move || loop {
-                    if handle.state::<Store>().needs_refresh() {
-                        refresh_and_notify(&handle);
+                .spawn(move || {
+                    let mut last_tick = std::time::SystemTime::now();
+                    loop {
+                        // Sortie de veille : bien plus de 5 min écoulées depuis le dernier tour.
+                        let now = std::time::SystemTime::now();
+                        let woke = now
+                            .duration_since(last_tick)
+                            .is_ok_and(|gap| gap > CHECK_INTERVAL + WAKE_GAP);
+                        last_tick = now;
+
+                        if handle.state::<Store>().needs_refresh() {
+                            refresh_and_notify(&handle);
+                        }
+                        send_due_reminders(&handle);
+                        // Nouvelle version de Glaux ? (au lancement, toutes les 6 h, au réveil)
+                        if handle.state::<UpdateState>().check_due(woke) {
+                            updates::check(&handle);
+                            notify(&handle);
+                        }
+                        std::thread::sleep(CHECK_INTERVAL);
                     }
-                    send_due_reminders(&handle);
-                    // Nouvelle version de Glaux ? (au lancement, puis une fois par jour)
-                    if handle.state::<UpdateState>().check_due() {
-                        updates::check(&handle);
-                        notify(&handle);
-                    }
-                    std::thread::sleep(CHECK_INTERVAL);
                 })?;
 
             // Menu du clic droit sur l'icône.

@@ -1,7 +1,8 @@
 // Mises à jour automatiques (module « updater » de Tauri).
 //
-// - Vérification au lancement puis une fois par jour : une seule requête vers GitHub
-//   (fichier latest.json de la dernière version publiée). Aucune donnée personnelle envoyée.
+// - Vérification au lancement, puis toutes les 6 h, et au réveil du Mac (si la dernière date
+//   de plus d'une heure) : une seule requête vers GitHub (fichier latest.json de la dernière
+//   version publiée). Aucune donnée personnelle envoyée.
 // - Une nouvelle version s'affiche en bas du panneau (« Installer la v0.2.0 ») :
 //   rien ne s'installe sans un clic.
 // - Le fichier téléchargé est vérifié avec la clé publique de tauri.conf.json : seule une
@@ -10,13 +11,16 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Intervalle entre deux vérifications.
-const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Au réveil du Mac (ou du PC), on revérifie si la dernière vérification date d'au moins 1 h.
+const CHECK_AFTER_WAKE: Duration = Duration::from_secs(60 * 60);
 
 /// État des mises à jour, partagé entre le fil d'arrière-plan et les commandes.
 #[derive(Default)]
@@ -27,19 +31,31 @@ pub struct UpdateState {
     installing: AtomicBool,
     /// Échec de la dernière installation (affiché au survol du bouton).
     error: Mutex<Option<String>>,
-    /// Dernière vérification.
-    last_check: Mutex<Option<Instant>>,
+    /// Dernière vérification (heure réelle : contrairement à `Instant` sur Mac, elle avance
+    /// aussi pendant la mise en veille).
+    last_check: Mutex<Option<SystemTime>>,
+}
+
+/// Vrai s'il est temps de vérifier : jamais fait, plus de 6 h, ou plus d'1 h après un réveil.
+/// Horloge reculée (changement manuel) : on vérifie.
+fn due(last: Option<SystemTime>, now: SystemTime, woke: bool) -> bool {
+    let Some(last) = last else {
+        return true;
+    };
+    let wait = if woke { CHECK_AFTER_WAKE } else { CHECK_EVERY };
+    now.duration_since(last)
+        .map_or(true, |elapsed| elapsed >= wait)
 }
 
 impl UpdateState {
-    /// Vrai si la dernière vérification date de plus de 24 h (ou n'a jamais eu lieu).
-    pub fn check_due(&self) -> bool {
+    /// Vrai s'il faut vérifier maintenant (voir `due`). `woke` : le système sort de veille.
+    pub fn check_due(&self, woke: bool) -> bool {
         if cfg!(debug_assertions) {
             return false; // mode développement : pas de mise à jour
         }
         self.last_check
             .lock()
-            .map(|last| last.is_none_or(|t| t.elapsed() >= CHECK_EVERY))
+            .map(|last| due(*last, SystemTime::now(), woke))
             .unwrap_or(false)
     }
 
@@ -61,7 +77,7 @@ impl UpdateState {
 pub fn check(app: &AppHandle) {
     let state = app.state::<UpdateState>();
     if let Ok(mut last) = state.last_check.lock() {
-        *last = Some(Instant::now());
+        *last = Some(SystemTime::now());
     }
     let result = tauri::async_runtime::block_on(async { app.updater()?.check().await });
     match result {
@@ -130,6 +146,8 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// La configuration du module (tauri.conf.json › plugins › updater) doit être lisible :
     /// sinon Glaux ne démarrerait pas.
     #[test]
@@ -142,5 +160,17 @@ mod tests {
         assert!(config.endpoints[0]
             .as_str()
             .ends_with("/releases/latest/download/latest.json"));
+    }
+
+    #[test]
+    fn verification_toutes_les_6_h_et_au_reveil() {
+        let now = SystemTime::now();
+        let ago = |minutes: u64| now - Duration::from_secs(minutes * 60);
+        assert!(due(None, now, false)); // jamais vérifié : au lancement
+        assert!(!due(Some(ago(5 * 60)), now, false)); // 5 h : pas encore
+        assert!(due(Some(ago(6 * 60)), now, false)); // 6 h
+        assert!(due(Some(ago(90)), now, true)); // réveil, 1 h 30 après
+        assert!(!due(Some(ago(20)), now, true)); // réveil, 20 min après : inutile
+        assert!(due(Some(now + Duration::from_secs(3600)), now, false)); // horloge reculée
     }
 }

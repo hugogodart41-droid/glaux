@@ -410,6 +410,16 @@ function openDetail(id: string): void {
   void renderDetail();
 }
 
+/** Indicateur demandé par un clic sur une notification (Rust le garde jusqu'à cette lecture). */
+async function openPendingIndicator(): Promise<void> {
+  try {
+    const id = await invoke<string | null>("take_pending_open");
+    if (id && dashboard?.indicators.some((i) => i.id === id)) openDetail(id);
+  } catch (err) {
+    console.error("Indicateur de la notification introuvable :", err);
+  }
+}
+
 function closeDetail(): void {
   if (large) return; // agrandi : la vue détail reste ouverte à droite
   detailId = null;
@@ -1595,6 +1605,11 @@ async function start(): Promise<void> {
   // Panneau agrandi la dernière fois : on rouvre en grand, sur le premier indicateur.
   ensureSelection();
   showScreen();
+
+  // 3. Clic sur une notification (Mac) : vue détail de l'indicateur concerné. Aussi au
+  // lancement, quand c'est ce clic qui a démarré Glaux.
+  await listen("open-indicator", () => void openPendingIndicator());
+  await openPendingIndicator();
 
   // La date du jour change si le Mac reste allumé : date et compte à rebours
   // sont remis à jour à chaque ouverture du panneau.

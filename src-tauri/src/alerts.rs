@@ -11,6 +11,9 @@ use crate::i18n::{fr_of_month, month_name, number, Lang};
 pub struct Alert {
     pub title: String,
     pub body: String,
+    /// Indicateur ouvert par un clic sur la notification (Mac) : « deposit_rate », « hicp » ;
+    /// None : simple ouverture du panneau.
+    pub indicator: Option<&'static str>,
 }
 
 /// Alerte si le taux de dépôt a changé entre l'ancien et le nouveau téléchargement.
@@ -43,6 +46,7 @@ pub fn rate_change_alert(old: &Observation, new: &Observation, lang: Lang) -> Op
             format!("Taux de dépôt : {rate} % ({change} pt){effective}."),
             format!("Deposit rate: {rate}% ({change} pp){effective}."),
         ),
+        indicator: Some("deposit_rate"),
     })
 }
 
@@ -82,6 +86,7 @@ pub fn new_inflation_alert(
             format!("Zone euro, sur 1 an{comparison}."),
             format!("Euro area, year on year{comparison}."),
         ),
+        indicator: Some("hicp"),
     })
 }
 

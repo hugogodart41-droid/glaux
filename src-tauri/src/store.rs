@@ -17,7 +17,7 @@ use std::time::Duration;
 use chrono::{Local, Months, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::agenda::{agenda_view, due_reminders, AgendaView};
+use crate::agenda::{self, agenda_view, due_reminders, AgendaView, Calendar};
 use crate::alerts::{new_inflation_alert, rate_change_alert, Alert};
 use crate::data::{
     history, real_rate, sparkline, spread, summarize, Frequency, Observation, Summary,
@@ -422,6 +422,10 @@ pub struct Store {
     prefs: Mutex<Prefs>,
     agent: ureq::Agent,
     cache: Mutex<CacheFile>,
+    /// Calendrier BCE / inflation en vigueur (dates intégrées ou agenda.json publié).
+    calendar: Mutex<Calendar>,
+    /// Copie locale du dernier agenda.json publié reçu (utilisée hors ligne).
+    calendar_path: PathBuf,
     refreshing: AtomicBool,
     last_error: Mutex<Option<String>>,
     /// Langue du système, utilisée tant que l'utilisateur n'en a pas choisi une.
@@ -452,6 +456,13 @@ impl Store {
             .and_then(|text| serde_json::from_str::<CacheFile>(&text).ok())
             .filter(|c| c.version == CACHE_VERSION)
             .unwrap_or_default();
+        // Dernier calendrier publié reçu, s'il va plus loin que les dates intégrées.
+        let calendar_path = dir.join("agenda.json");
+        let calendar = fs::read_to_string(&calendar_path)
+            .ok()
+            .and_then(|text| Calendar::parse(&text).ok())
+            .map(|saved| Calendar::builtin().merged_with(&saved))
+            .unwrap_or_else(Calendar::builtin);
 
         Self {
             path,
@@ -459,6 +470,8 @@ impl Store {
             prefs: Mutex::new(prefs),
             agent: ecb::new_agent(),
             cache: Mutex::new(cache),
+            calendar: Mutex::new(calendar),
+            calendar_path,
             refreshing: AtomicBool::new(false),
             last_error: Mutex::new(None),
             system_lang,
@@ -487,22 +500,15 @@ impl Store {
         }
     }
 
-    /// Téléchargement n° `i` : une série de `SERIES`, ou un indicateur de `BY_COUNTRY`
-    /// pour tous les pays (au-delà de `SERIES.len()`).
-    fn download_task(&self, i: usize, start: NaiveDate) -> Result<Vec<CachedSeries>, String> {
-        if let Some(def) = SERIES.get(i) {
-            let observations = ecb::fetch_series(&self.agent, def, start)?;
-            return Ok(vec![CachedSeries {
-                id: def.id.to_string(),
-                key: def.full_key(),
-                observations,
-            }]);
-        }
-        let def = BY_COUNTRY
-            .get(i - SERIES.len())
-            .ok_or("téléchargement inconnu")?;
-        let countries = ecb::fetch_by_country(&self.agent, def, start)?;
-        Ok(countries
+    /// Une requête BCE : séries reçues, prêtes pour le cache, et séries de `SERIES` absentes
+    /// de la réponse (signalées comme erreur ; un pays manquant ne l'est pas).
+    fn download_task(
+        &self,
+        download: &ecb::Download,
+        start: NaiveDate,
+    ) -> Result<DownloadResult, String> {
+        let (received, missing) = ecb::fetch_download(&self.agent, download, start)?;
+        let series = received
             .into_iter()
             .filter_map(|(id, observations)| {
                 Some(CachedSeries {
@@ -511,7 +517,8 @@ impl Store {
                     observations,
                 })
             })
-            .collect())
+            .collect();
+        Ok((series, missing))
     }
 
     /// Réserve l'actualisation. `None` si une actualisation est déjà en cours.
@@ -532,11 +539,12 @@ impl Store {
             .unwrap_or(today);
 
         // Réseau d'abord, sans bloquer le cache (l'interface reste réactive) :
-        // `PARALLEL_DOWNLOADS` fils se partagent les requêtes, chacun prend la suivante libre :
-        // une par série de `SERIES`, puis une par indicateur de `BY_COUNTRY` (8 pays d'un coup).
-        let tasks = SERIES.len() + BY_COUNTRY.len();
+        // `PARALLEL_DOWNLOADS` fils se partagent les requêtes (séries seules ou groupées,
+        // voir `ecb::downloads`), chacun prend la suivante libre.
+        let plan = ecb::downloads();
+        let tasks = plan.len();
         let next = AtomicUsize::new(0);
-        let mut results: Vec<(usize, Result<Vec<CachedSeries>, String>)> =
+        let mut results: Vec<(usize, Result<DownloadResult, String>)> =
             std::thread::scope(|scope| {
                 let workers: Vec<_> = (0..PARALLEL_DOWNLOADS)
                     .map(|_| {
@@ -547,7 +555,7 @@ impl Store {
                                 if i >= tasks {
                                     break;
                                 }
-                                done.push((i, self.download_task(i, start)));
+                                done.push((i, self.download_task(&plan[i], start)));
                             }
                             done
                         })
@@ -564,9 +572,21 @@ impl Store {
         let mut errors = Vec::new();
         for (i, result) in results {
             match result {
-                Ok(series) => fresh.extend(series),
-                Err(e) => errors.push(format!("{} : {e}", task_name(i))),
+                Ok((series, missing)) => {
+                    fresh.extend(series);
+                    errors.extend(
+                        missing
+                            .iter()
+                            .map(|id| format!("{id} : absente de la réponse")),
+                    );
+                }
+                Err(e) => errors.push(format!("{} : {e}", plan[i].name)),
             }
+        }
+
+        // Calendrier publié (agenda.json sur GitHub) : facultatif, une erreur n'est pas signalée.
+        if let Err(e) = self.refresh_calendar() {
+            eprintln!("Calendrier publié non mis à jour : {e}");
         }
 
         let lang = self.lang();
@@ -767,13 +787,39 @@ impl Store {
         }
     }
 
+    /// Calendrier BCE / inflation en vigueur.
+    pub fn calendar(&self) -> Calendar {
+        self.calendar
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_else(|_| Calendar::builtin())
+    }
+
+    /// Récupère le calendrier publié sur GitHub (agenda.json) ; s'il est valide, il est gardé
+    /// en copie locale et remplace, liste par liste, les dates qui vont moins loin.
+    /// En cas d'échec, le calendrier en vigueur ne change pas (rien n'est signalé : les
+    /// dates intégrées suffisent).
+    pub fn refresh_calendar(&self) -> Result<(), String> {
+        let text = agenda::fetch_remote(&self.agent)?;
+        let remote = Calendar::parse(&text)?;
+        if let Some(dir) = self.calendar_path.parent() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        fs::write(&self.calendar_path, &text).map_err(|e| e.to_string())?;
+        if let Ok(mut calendar) = self.calendar.lock() {
+            *calendar = Calendar::builtin().merged_with(&remote);
+        }
+        Ok(())
+    }
+
     /// Rappels du jour J à envoyer maintenant, chacun une seule fois (même après un redémarrage).
     pub fn take_due_reminders(&self, today: NaiveDate, now: NaiveTime) -> Vec<Alert> {
         let lang = self.lang();
         let Ok(mut prefs) = self.prefs.lock() else {
             return Vec::new();
         };
-        let fresh: Vec<_> = due_reminders(today, now, lang)
+        let calendar = self.calendar();
+        let fresh: Vec<_> = due_reminders(&calendar, today, now, lang)
             .into_iter()
             .filter(|r| !prefs.reminded.contains(&r.key))
             .collect();
@@ -900,7 +946,7 @@ impl Store {
             rows: self.rows(),
             selections: self.selections(),
             countries: self.countries(),
-            agenda: agenda_view(today),
+            agenda: agenda_view(&self.calendar(), today),
             notifications: self.notifications_enabled(),
             notification_error: None,
             language: self.lang(),
@@ -912,14 +958,8 @@ impl Store {
     }
 }
 
-/// Nom d'un téléchargement (voir `download_task`), pour les messages d'erreur.
-fn task_name(i: usize) -> &'static str {
-    SERIES
-        .get(i)
-        .map(|def| def.id)
-        .or_else(|| BY_COUNTRY.get(i - SERIES.len()).map(|def| def.base))
-        .unwrap_or("?")
-}
+/// Résultat d'une requête : séries pour le cache, séries attendues mais absentes.
+type DownloadResult = (Vec<CachedSeries>, Vec<&'static str>);
 
 /// Observations en cache d'une série BCE, zone euro ou pays (vide si absente ou si sa clé
 /// a changé).
@@ -1507,6 +1547,27 @@ mod tests {
             let (real, _, _) = series_data(&cache, "real_rate").unwrap();
             assert_eq!(real.last().unwrap().value, -1.5);
         }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn calendrier_publie_garde_hors_ligne() {
+        let dir = temp_dir("calendrier");
+        fs::create_dir_all(&dir).unwrap();
+        // Copie locale d'un agenda.json qui va jusqu'en 2028 : reprise au lancement suivant.
+        fs::write(
+            dir.join("agenda.json"),
+            r#"{"ecb_decisions": ["2027-12-16", "2028-02-03"], "hicp_flash": ["2028-01-05", "2028-02-01"]}"#,
+        )
+        .unwrap();
+        let store = Store::load(dir.clone(), Lang::Fr);
+        let view = store.view(NaiveDate::from_ymd_opt(2028, 1, 10).unwrap());
+        assert_eq!(view.agenda.ecb, ["2028-02-03"]);
+        assert_eq!(view.agenda.hicp, ["2028-02-01"]);
+        // Copie illisible : dates intégrées.
+        fs::write(dir.join("agenda.json"), "{").unwrap();
+        let store = Store::load(dir.clone(), Lang::Fr);
+        assert_eq!(store.calendar(), Calendar::builtin());
         let _ = fs::remove_dir_all(dir);
     }
 

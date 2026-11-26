@@ -326,8 +326,8 @@ macro_rules! by_country {
 
 /// Un indicateur du panneau disponible aussi pour chaque pays de `COUNTRIES`.
 ///
-/// Les 8 pays arrivent en une seule requête (clé « M.DE+FR+….N.000000.4D0.ANR ») :
-/// la BCE met environ 2 s à répondre, quelle que soit la quantité de données.
+/// La zone euro et les 8 pays arrivent en une seule requête (clé « M.U2+DE+FR+….N.000000.4D0.ANR »,
+/// voir `downloads`).
 pub struct CountryDef {
     /// Ligne du panneau (série zone euro de `SERIES`) : « hicp », « unemployment »…
     pub base: &'static str,
@@ -442,21 +442,20 @@ pub fn parse_csv(body: &str) -> Result<Vec<Observation>, String> {
     Ok(observations)
 }
 
-/// Lit un CSV de la BCE qui contient plusieurs pays (colonne REF_AREA) : observations
-/// triées par date, pour chaque pays (code en minuscules, ex. « fr »).
-pub fn parse_csv_by_area(body: &str) -> Result<Vec<(String, Vec<Observation>)>, String> {
-    let mut areas: Vec<(String, Vec<Observation>)> = Vec::new();
-    for (area, observation) in parse_rows(body)? {
-        let area = area.to_lowercase();
-        match areas.iter_mut().find(|(a, _)| *a == area) {
+/// Lit un CSV de la BCE qui contient plusieurs séries : observations triées par date, pour
+/// chaque clé complète de la colonne KEY (ex. « HICP.M.FR.N.000000.4D0.ANR »).
+pub fn parse_csv_by_key(body: &str) -> Result<Vec<(String, Vec<Observation>)>, String> {
+    let mut series: Vec<(String, Vec<Observation>)> = Vec::new();
+    for (key, observation) in parse_rows(body)? {
+        match series.iter_mut().find(|(k, _)| *k == key) {
             Some((_, list)) => list.push(observation),
-            None => areas.push((area, vec![observation])),
+            None => series.push((key, vec![observation])),
         }
     }
-    for (_, list) in &mut areas {
+    for (_, list) in &mut series {
         sort_by_date(list);
     }
-    Ok(areas)
+    Ok(series)
 }
 
 /// Tri par date, sans doublon.
@@ -465,7 +464,7 @@ fn sort_by_date(observations: &mut Vec<Observation>) {
     observations.dedup_by(|a, b| a.date == b.date);
 }
 
-/// Lignes du CSV : (pays de la colonne REF_AREA, vide si absente ; observation).
+/// Lignes du CSV : (clé de la colonne KEY, vide si absente ; observation).
 fn parse_rows(body: &str) -> Result<Vec<(String, Observation)>, String> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)
@@ -483,7 +482,7 @@ fn parse_rows(body: &str) -> Result<Vec<(String, Observation)>, String> {
     };
     let date_col = column("TIME_PERIOD")?;
     let value_col = column("OBS_VALUE")?;
-    let area_col = column("REF_AREA").ok();
+    let key_col = column("KEY").ok();
 
     let mut rows = Vec::new();
     for record in reader.records() {
@@ -495,13 +494,13 @@ fn parse_rows(body: &str) -> Result<Vec<(String, Observation)>, String> {
             continue;
         };
         if value.is_finite() && parse_period(date).is_some() {
-            let area = area_col
+            let key = key_col
                 .and_then(|col| record.get(col))
                 .unwrap_or_default()
                 .trim()
                 .to_string();
             rows.push((
-                area,
+                key,
                 Observation {
                     date: date.trim().to_string(),
                     value,
@@ -539,31 +538,133 @@ fn get(agent: &ureq::Agent, url: &str) -> Result<Option<Vec<Observation>>, Strin
     }
 }
 
-/// Télécharge un indicateur pour les 8 pays en une requête, depuis `start` (inclus).
-/// Renvoie (identifiant, observations) pour chaque pays reçu ; un pays sans donnée est
-/// simplement absent (affiché « — »), sans faire échouer les autres.
-pub fn fetch_by_country(
-    agent: &ureq::Agent,
-    def: &CountryDef,
-    start: NaiveDate,
-) -> Result<Vec<(&'static str, Vec<Observation>)>, String> {
-    let all = COUNTRIES.join("+");
-    let key = def.full_key(&all);
-    let (flow, key) = key.split_once('.').unwrap_or((def.flow, &key));
-    let url = format!("{API_BASE}/{flow}/{key}?format=csvdata&detail=dataonly&startPeriod={start}");
-    let body = get_csv(agent, &url)?.ok_or_else(|| format!("séries {} introuvables", def.base))?;
-    let received: Vec<_> = parse_csv_by_area(&body)?
-        .into_iter()
-        .filter(|(_, observations)| !observations.is_empty())
-        .filter_map(|(area, observations)| {
-            let k = COUNTRIES.iter().position(|c| *c == area)?;
-            Some((def.ids[k], observations))
-        })
-        .collect();
-    if received.is_empty() {
-        return Err(format!("aucune donnée pour {}", def.full_key(&all)));
+// ---------- Téléchargements groupés ----------
+// La BCE met environ 2 s à répondre à chaque requête, quelle que soit la quantité de
+// données. Les séries dont les clés ne diffèrent que par une dimension (pays, échéance…)
+// partent donc ensemble : « YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M+SR_6M+… » ramène toute la
+// courbe. 12 requêtes au lieu de 34.
+
+/// Une requête BCE : une série seule, ou un groupe de séries (identifiant, clé complète).
+pub struct Download {
+    /// Nom pour les messages d'erreur : l'identifiant d'une série seule, sinon le groupe.
+    pub name: &'static str,
+    pub series: Vec<(&'static str, String)>,
+}
+
+/// Groupe de téléchargement d'une série (None : seule dans sa requête).
+fn download_group(id: &str) -> Option<&'static str> {
+    if id.starts_with("yc_") {
+        return Some("curve"); // 11 échéances de la courbe AAA
     }
-    Ok(received)
+    if id.starts_with("yield_") && id != "yield_10y" {
+        return Some("yields"); // taux à 10 ans des 8 pays
+    }
+    if id == "loans_nfc" || id == "loans_hh" {
+        return Some("loans"); // crédit aux entreprises et aux ménages
+    }
+    // Inflation, sous-jacente, services, chômage : zone euro et 8 pays ensemble.
+    BY_COUNTRY
+        .iter()
+        .find(|def| def.base == id || def.ids.contains(&id))
+        .map(|def| def.base)
+}
+
+/// Toutes les requêtes d'une actualisation, dans l'ordre de `SERIES` puis de `BY_COUNTRY`.
+pub fn downloads() -> Vec<Download> {
+    let ids = SERIES
+        .iter()
+        .map(|def| def.id)
+        .chain(BY_COUNTRY.iter().flat_map(|def| def.ids));
+    let mut plan: Vec<Download> = Vec::new();
+    for id in ids {
+        let Some(info) = series_info(id) else {
+            continue;
+        };
+        // Un taux en escalier (taux de dépôt) a sa propre requête complémentaire : seul.
+        let group = download_group(id).filter(|_| !info.step);
+        match group.and_then(|g| plan.iter_mut().find(|d| d.name == g)) {
+            Some(download) => download.series.push((id, info.key)),
+            None => plan.push(Download {
+                name: group.unwrap_or(id),
+                series: vec![(id, info.key)],
+            }),
+        }
+    }
+    plan
+}
+
+/// Clé d'une requête pour plusieurs séries : dimensions communes, et « A+B+… » pour la seule
+/// qui varie. None si les clés diffèrent sur plus d'une dimension (la BCE renverrait aussi
+/// des combinaisons non voulues) ou n'ont pas la même forme.
+pub fn combined_key(keys: &[String]) -> Option<String> {
+    let split: Vec<Vec<&str>> = keys.iter().map(|k| k.split('.').collect()).collect();
+    let first = split.first()?;
+    if split.iter().any(|parts| parts.len() != first.len()) {
+        return None;
+    }
+    let mut varying = 0;
+    let mut combined = Vec::with_capacity(first.len());
+    for position in 0..first.len() {
+        let mut values: Vec<&str> = Vec::new();
+        for parts in &split {
+            if !values.contains(&parts[position]) {
+                values.push(parts[position]);
+            }
+        }
+        if values.len() > 1 {
+            varying += 1;
+        }
+        combined.push(values.join("+"));
+    }
+    (varying <= 1).then(|| combined.join("."))
+}
+
+/// Réponse d'une requête : séries reçues (identifiant, observations), et identifiants des
+/// séries de `SERIES` absentes.
+pub type Received = (Vec<(&'static str, Vec<Observation>)>, Vec<&'static str>);
+
+/// Exécute une requête depuis `start` (inclus) : séries reçues (identifiant, observations),
+/// et noms de celles de `SERIES` absentes de la réponse (une série par pays peut manquer
+/// sans erreur : affichée « — »).
+pub fn fetch_download(
+    agent: &ureq::Agent,
+    download: &Download,
+    start: NaiveDate,
+) -> Result<Received, String> {
+    // Série seule : requête habituelle (avec la valeur d'avant la période pour un taux en escalier).
+    if let [(id, _)] = download.series.as_slice() {
+        if let Some(def) = SERIES.iter().find(|def| def.id == *id) {
+            return fetch_series(agent, def, start).map(|o| (vec![(*id, o)], Vec::new()));
+        }
+    }
+    let keys: Vec<String> = download.series.iter().map(|(_, key)| key.clone()).collect();
+    let key =
+        combined_key(&keys).ok_or_else(|| format!("clés incompatibles ({})", download.name))?;
+    let (flow, rest) = key.split_once('.').ok_or("clé BCE invalide")?;
+    let url =
+        format!("{API_BASE}/{flow}/{rest}?format=csvdata&detail=dataonly&startPeriod={start}");
+    let body =
+        get_csv(agent, &url)?.ok_or_else(|| format!("séries {} introuvables", download.name))?;
+    let mut received = parse_csv_by_key(&body)?;
+
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+    for (id, key) in &download.series {
+        let observations = received
+            .iter_mut()
+            .find(|(k, _)| k == key)
+            .map(|(_, o)| std::mem::take(o))
+            .unwrap_or_default();
+        if !observations.is_empty() {
+            found.push((*id, observations));
+        } else if SERIES.iter().any(|def| def.id == *id) {
+            missing.push(*id);
+        }
+    }
+    if found.is_empty() {
+        return Err(format!("aucune donnée pour {key}"));
+    }
+    Ok((found, missing))
 }
 
 /// Télécharge une série depuis `start` (inclus).
@@ -644,30 +745,23 @@ mod tests {
         let agent = new_agent();
         let start = chrono::Local::now().date_naive() - chrono::Months::new(3);
         let mut failures = Vec::new();
-        for def in &SERIES {
-            match fetch_series(&agent, def, start) {
-                Ok(obs) => {
-                    let last = obs.last().unwrap();
-                    println!(
-                        "OK   {:<13} {:>4} valeurs, dernière : {} = {}",
-                        def.id,
-                        obs.len(),
-                        last.date,
-                        last.value
-                    );
+        for download in downloads() {
+            match fetch_download(&agent, &download, start) {
+                Ok((series, missing)) => {
+                    for (id, obs) in &series {
+                        let last = obs.last().unwrap();
+                        println!(
+                            "OK   {id:<22} {:>4} valeurs, dernière : {} = {}",
+                            obs.len(),
+                            last.date,
+                            last.value
+                        );
+                    }
+                    failures.extend(missing);
                 }
                 Err(e) => {
-                    println!("ÉCHEC {:<12} {e}", def.id);
-                    failures.push(def.id);
-                }
-            }
-        }
-        for def in &BY_COUNTRY {
-            match fetch_by_country(&agent, def, start) {
-                Ok(countries) => println!("OK   {:<18} {} pays", def.base, countries.len()),
-                Err(e) => {
-                    println!("ÉCHEC {:<18} {e}", def.base);
-                    failures.push(def.base);
+                    println!("ÉCHEC {:<21} {e}", download.name);
+                    failures.push(download.name);
                 }
             }
         }
@@ -712,18 +806,84 @@ mod tests {
     }
 
     #[test]
-    fn lit_un_csv_avec_plusieurs_pays() {
+    fn lit_un_csv_avec_plusieurs_series() {
         let csv = "KEY,FREQ,REF_AREA,ADJUSTMENT,TIME_PERIOD,OBS_VALUE\n\
             LFSI.M.FR.S,M,FR,S,2026-09,8.5\n\
             LFSI.M.DE.S,M,DE,S,2026-09,4.1\n\
             LFSI.M.FR.S,M,FR,S,2026-08,8.3\n\
             LFSI.M.DE.S,M,DE,S,2026-08,NaN\n";
-        let areas = parse_csv_by_area(csv).unwrap();
-        assert_eq!(areas.len(), 2);
-        let (area, fr) = &areas[0];
-        assert_eq!(area, "fr");
+        let series = parse_csv_by_key(csv).unwrap();
+        assert_eq!(series.len(), 2);
+        let (key, fr) = &series[0];
+        assert_eq!(key, "LFSI.M.FR.S");
         assert_eq!(fr.len(), 2);
         assert_eq!(fr[0].date, "2026-08"); // trié par date
-        assert_eq!(areas[1].1.len(), 1); // valeur manquante ignorée
+        assert_eq!(series[1].1.len(), 1); // valeur manquante ignorée
+    }
+
+    #[test]
+    fn requetes_groupees() {
+        let plan = downloads();
+        // 5 séries seules + 7 groupes (inflation, sous-jacente, services, chômage — zone euro
+        // et pays —, taux par pays, courbe, crédit) = 12 requêtes.
+        let names: Vec<_> = plan.iter().map(|d| d.name).collect();
+        assert_eq!(
+            names,
+            [
+                "deposit_rate",
+                "hicp",
+                "core_inflation",
+                "services_inflation",
+                "unemployment",
+                "estr",
+                "yield_10y",
+                "yields",
+                "curve",
+                "eurusd",
+                "m3",
+                "loans"
+            ]
+        );
+        // Toutes les séries une seule fois, et chaque groupe forme une clé valide.
+        let total: usize = plan.iter().map(|d| d.series.len()).sum();
+        assert_eq!(total, SERIES.len() + 4 * 8);
+        for download in &plan {
+            let keys: Vec<String> = download.series.iter().map(|(_, k)| k.clone()).collect();
+            assert!(
+                combined_key(&keys).is_some(),
+                "groupe {} invalide",
+                download.name
+            );
+        }
+        let curve = plan.iter().find(|d| d.name == "curve").unwrap();
+        let keys: Vec<String> = curve.series.iter().map(|(_, k)| k.clone()).collect();
+        assert_eq!(
+            combined_key(&keys).unwrap(),
+            "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M+SR_6M+SR_1Y+SR_2Y+SR_3Y+SR_5Y+SR_7Y+SR_10Y+SR_15Y+SR_20Y+SR_30Y"
+        );
+        let hicp = plan.iter().find(|d| d.name == "hicp").unwrap();
+        let keys: Vec<String> = hicp.series.iter().map(|(_, k)| k.clone()).collect();
+        assert_eq!(
+            combined_key(&keys).unwrap(),
+            "HICP.M.U2+DE+FR+IT+ES+GR+PT+BE+NL.N.000000.4D0.ANR"
+        );
+        // Taux de dépôt (en escalier) : seul.
+        assert_eq!(plan[0].series.len(), 1);
+    }
+
+    #[test]
+    fn cle_combinee_sur_une_seule_dimension() {
+        let keys = |list: &[&str]| list.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            combined_key(&keys(&["A.M.FR.X", "A.M.DE.X"])).as_deref(),
+            Some("A.M.FR+DE.X")
+        );
+        assert_eq!(
+            combined_key(&keys(&["A.M.FR.X"])).as_deref(),
+            Some("A.M.FR.X")
+        );
+        assert_eq!(combined_key(&keys(&["A.M.FR.X", "A.Q.DE.X"])), None); // deux dimensions
+        assert_eq!(combined_key(&keys(&["A.M.FR.X", "A.M.FR"])), None); // formes différentes
+        assert_eq!(combined_key(&[]), None);
     }
 }
