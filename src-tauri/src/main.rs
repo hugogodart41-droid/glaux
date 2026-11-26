@@ -523,6 +523,14 @@ fn set_selection(app: AppHandle, group: String, members: Vec<String>) -> Result<
     Ok(())
 }
 
+/// Pays d'un indicateur « zone euro ou par pays » (ex. « hicp », « fr ») ; `None` : zone euro.
+#[tauri::command]
+fn set_country(app: AppHandle, id: String, country: Option<String>) -> Result<(), String> {
+    app.state::<Store>().set_country(&id, country.as_deref())?;
+    notify(&app);
+    Ok(())
+}
+
 /// Change la langue de Glaux : interface (renvoyée à l'écran), notifications, menu de l'icône.
 #[tauri::command]
 fn set_language(app: AppHandle, language: Lang) -> Result<(), String> {
@@ -640,6 +648,7 @@ fn main() {
             set_layout,
             reset_layout,
             set_selection,
+            set_country,
             get_curve,
             resize_panel,
             install_update,

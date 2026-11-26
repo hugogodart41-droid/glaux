@@ -80,7 +80,10 @@
             <span class="indicator__sub" id="detail-change"></span>
           </div>
         </div>
-        <!-- Groupe (écarts de taux) : une valeur par pays, dans la couleur de sa courbe. -->
+        <!-- Inflation, chômage : zone euro ou un pays (pastilles remplies par src/main.ts). -->
+        <div class="country-chips detail__countries" id="detail-countries" role="group" hidden></div>
+        <!-- Groupe (taux, écarts) : une valeur par pays, dans la couleur de sa courbe ;
+             indicateur par pays : le pays et la zone euro (pointillés). -->
         <div class="detail__legend" id="detail-legend" hidden></div>
         <div class="detail__controls">
           <div class="segmented" role="group" aria-label="Période">

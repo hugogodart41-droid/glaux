@@ -377,7 +377,84 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
 export function displayFor(id: string): Display | undefined {
   const format = FORMATS[id];
   const texts = TEXTS[lang()][id];
-  return format && texts ? { ...format, ...texts } : undefined;
+  if (format && texts) return { ...format, ...texts };
+  return countryDisplay(id);
+}
+
+// ---------- Zone euro ou par pays ----------
+// Inflation et chômage existent pour chaque pays (BY_COUNTRY dans src-tauri/src/ecb.rs) :
+// la ligne du panneau affiche la zone euro ou le pays choisi dans la vue détail.
+
+/** Pays proposés, dans l'ordre de COUNTRIES (ecb.rs). */
+export const COUNTRY_CODES = ["de", "fr", "it", "es", "gr", "pt", "be", "nl"];
+
+/** Lignes du panneau disponibles par pays (même liste que BY_COUNTRY dans ecb.rs). */
+const COUNTRY_ROWS = ["hicp", "core_inflation", "services_inflation", "unemployment"];
+
+const COUNTRY_NAMES: Record<Lang, Record<string, string>> = {
+  fr: {
+    de: "Allemagne",
+    fr: "France",
+    it: "Italie",
+    es: "Espagne",
+    gr: "Grèce",
+    pt: "Portugal",
+    be: "Belgique",
+    nl: "Pays-Bas",
+  },
+  en: {
+    de: "Germany",
+    fr: "France",
+    it: "Italy",
+    es: "Spain",
+    gr: "Greece",
+    pt: "Portugal",
+    be: "Belgium",
+    nl: "Netherlands",
+  },
+};
+
+/** Vrai pour une ligne qu'on peut afficher par pays (inflation, chômage). */
+export function hasCountries(row: string): boolean {
+  return COUNTRY_ROWS.includes(row);
+}
+
+/** Nom d'un pays (« France ») ; sans pays : « Zone euro ». */
+export function countryName(code: string | undefined): string {
+  return (code && COUNTRY_NAMES[lang()][code]) || (lang() === "fr" ? "Zone euro" : "Euro area");
+}
+
+/** Code court d'une pastille : « FR », ou « ZE » / « EA » pour la zone euro. */
+export function countryCode(code: string | undefined): string {
+  return code ? code.toUpperCase() : lang() === "fr" ? "ZE" : "EA";
+}
+
+/** Série affichée sur une ligne : « hicp » (zone euro) ou « hicp_fr » (pays choisi). */
+export function countrySeries(row: string, country: string | undefined): string {
+  return country && hasCountries(row) && COUNTRY_CODES.includes(country) ? `${row}_${country}` : row;
+}
+
+/** Ligne et pays d'une série par pays (« hicp_fr » → ["hicp", "fr"]) ; sinon undefined. */
+export function splitCountrySeries(id: string): [string, string] | undefined {
+  const cut = id.lastIndexOf("_");
+  const [row, country] = [id.slice(0, cut), id.slice(cut + 1)];
+  return cut > 0 && hasCountries(row) && COUNTRY_CODES.includes(country) ? [row, country] : undefined;
+}
+
+/**
+ * Présentation d'une série par pays : celle de l'indicateur zone euro, avec le pays dans
+ * l'infobulle (« Indice des prix harmonisé (IPCH), France, glissement annuel. »).
+ */
+function countryDisplay(id: string): Display | undefined {
+  const split = splitCountrySeries(id);
+  if (!split) return undefined;
+  const [row, country] = split;
+  const format = FORMATS[row];
+  const texts = TEXTS[lang()][row];
+  if (!format || !texts) return undefined;
+  const name = countryName(country);
+  const hint = texts.hint.replace(lang() === "fr" ? "zone euro" : "euro area", name);
+  return { ...format, ...texts, hint };
 }
 
 // ---------- Groupes : plusieurs indicateurs sur une même ligne ----------

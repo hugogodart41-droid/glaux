@@ -210,19 +210,30 @@ function drawTitle(ctx: CanvasRenderingContext2D, layout: Layout, title: string,
     size -= 2;
     ctx.font = `600 ${size}px ${SERIF}`;
   }
+  // Titre encore trop long (« Inflation des services · Pays-Bas » en paysage) : réduit juste
+  // assez pour tenir sur sa ligne, sans déborder sur la courbe.
+  const width = ctx.measureText(title).width;
+  if (width > spot.maxWidth) {
+    size = Math.floor((size * spot.maxWidth) / width);
+    ctx.font = `600 ${size}px ${SERIF}`;
+  }
   ctx.fillText(title, spot.x, spot.y);
   ctx.fillStyle = COLORS.cremeDoux;
   ctx.font = `${hint.size}px ${SANS}`;
   drawBlock(ctx, subtitle, hint);
 }
 
-/** Période de la courbe (« SUR 5 ANS · depuis novembre 2021 ») puis la courbe. */
+/**
+ * Période de la courbe (« SUR 5 ANS · depuis novembre 2021 »), suivie de `note` s'il y en a
+ * une (« pointillés : zone euro »), puis la courbe.
+ */
 function drawChartBlock(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
   series: ChartSeries[],
   display: Display,
   months: number,
+  note?: string,
 ): void {
   const { period, chart } = layout;
   ctx.textAlign = "left";
@@ -234,7 +245,8 @@ function drawChartBlock(
   const first = firstDate ? parsePeriod(firstDate) : null;
   const since = first ? new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(first) : "";
   const label = t().overYears(Math.max(1, Math.round(months / 12)));
-  ctx.fillText(`${label.toUpperCase()}${since ? `  ·  ${t().sinceMonth(since)}` : ""}`, period.x, period.y);
+  const notePart = note ? `  ·  ${note}` : "";
+  ctx.fillText(`${label.toUpperCase()}${since ? `  ·  ${t().sinceMonth(since)}` : ""}${notePart}`, period.x, period.y);
   drawChartOnCanvas(
     ctx,
     series,
@@ -297,11 +309,13 @@ export async function renderExportImage(
   months: number,
   agenda: AgendaData | undefined,
   format: ExportFormat,
+  /** Indicateur d'un pays : titre avec le pays, zone euro en pointillés. */
+  country?: { title: string; reference: Observation[] },
 ): Promise<Uint8Array> {
   const layout = LAYOUTS[format];
   const { canvas, ctx } = newCanvas(layout);
   drawHeader(ctx, layout);
-  drawTitle(ctx, layout, display.label, display.hint);
+  drawTitle(ctx, layout, country?.title ?? display.label, display.hint);
 
   // Valeur, puis variation et date de la donnée (sur deux lignes si besoin).
   const latest = indicator.latest;
@@ -319,7 +333,10 @@ export async function renderExportImage(
     ctx.fillText(agendaLine, layout.agenda.x, layout.agenda.y + shift);
   }
 
-  drawChartBlock(ctx, layout, [{ points, color: COLORS.or }], display, months);
+  // Pays : zone euro en pointillés, dessinée d'abord pour rester sous la courbe du pays.
+  const series: ChartSeries[] = [{ points, color: COLORS.or }];
+  if (country) series.unshift({ points: country.reference, color: COLORS.cremeDoux, dashed: true });
+  drawChartBlock(ctx, layout, series, display, months, country ? t().euroDashed : undefined);
   drawFooter(ctx, layout, display.explanation);
   return toPng(canvas);
 }

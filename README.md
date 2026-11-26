@@ -11,11 +11,12 @@ Data comes straight from the European Central Bank's official API. No account, n
 
 - 13 indicators to choose from: latest value, change over 1 month and a 1-year mini chart
 - AAA euro area yield curve from 3 months to 30 years, compared with 1 or 5 years ago, and the 2-10 year slope
+- Inflation (headline, core, services) and unemployment for the euro area or a country of your choice (Germany, France, Italy, Spain, Greece, Portugal, Belgium, Netherlands), compared with the euro area on the chart
 - 10-year government bond yields by country (Germany, France, Italy, Spain, Greece, Portugal, Belgium, Netherlands; monthly averages), up to three side by side
 - 10-year spreads against Germany for up to three countries of your choice (France, Italy, Spain, Greece, Portugal, Belgium, Netherlands), on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
 - Image export in three formats: portrait 1080 × 1350 (LinkedIn, Instagram), landscape 1200 × 675 (LinkedIn, X) and story 1080 × 1920 (TikTok, Reels), saved as PNG or copied to paste straight into a post
-- Excel export of all historical series (daily, monthly and yield curve sheets, sources), in one click
+- Excel export of all historical series (daily, monthly, by country and yield curve sheets, sources), in one click
 - Choose which indicators to show and drag them into your own order; the panel shrinks to fit
 - Enlarge the panel to see the list and a large chart side by side; drag it by its header to move it
 - Calendar: next ECB decision and next flash inflation release, with a reminder on the day

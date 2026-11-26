@@ -31,9 +31,11 @@ impl SeriesDef {
     }
 }
 
-/// Séries téléchargées, dans l'ordre par défaut du panneau :
+/// Séries téléchargées, dans l'ordre par défaut du panneau (rangé ensuite par rubrique,
+/// voir `section_of` dans store.rs) :
 /// - les 11 indicateurs du panneau (5 masqués tant que l'utilisateur ne les affiche pas,
-///   voir `DEFAULT_HIDDEN` dans store.rs) ;
+///   voir `DEFAULT_HIDDEN` dans store.rs) ; inflation et chômage existent aussi par pays
+///   (`BY_COUNTRY`, plus bas) ;
 /// - les taux à 10 ans par pays (ligne « Taux à 10 ans par pays », 3 pays au choix), qui
 ///   servent aussi aux écarts de taux (calculés dans store.rs) ;
 /// - les taux de la courbe AAA (3 mois → 30 ans), affichés ensemble sur la ligne
@@ -71,6 +73,15 @@ pub const SERIES: [SeriesDef; 30] = [
         id: "services_inflation",
         flow: "HICP",
         key: "M.U2.N.SERV00.4D0.ANR",
+        frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.
+    SeriesDef {
+        id: "unemployment",
+        flow: "LFSI",
+        key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
         frequency: Frequency::Monthly,
         step: false,
         shown: true,
@@ -260,15 +271,6 @@ pub const SERIES: [SeriesDef; 30] = [
         step: false,
         shown: true,
     },
-    // Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.
-    SeriesDef {
-        id: "unemployment",
-        flow: "LFSI",
-        key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
-        frequency: Frequency::Monthly,
-        step: false,
-        shown: true,
-    },
     // Masse monétaire M3 : croissance sur 1 an (bilans des banques, publiée vers le 28 du mois suivant).
     SeriesDef {
         id: "m3",
@@ -301,6 +303,123 @@ pub const SERIES: [SeriesDef; 30] = [
     // moyennes mensuelles publiées par la BCE, environ 3 semaines après la fin du mois.
 ];
 
+/// Pays proposés pour les indicateurs « zone euro ou par pays » (codes ISO en minuscules,
+/// ordre d'affichage) : les 4 grandes économies de la zone euro, puis 4 pays suivis de près
+/// par les marchés. Même liste que les taux à 10 ans par pays.
+pub const COUNTRIES: [&str; 8] = ["de", "fr", "it", "es", "gr", "pt", "be", "nl"];
+
+/// Identifiants « {indicateur}_{pays} », dans l'ordre de `COUNTRIES` (ex. « hicp_fr »).
+macro_rules! by_country {
+    ($base:literal) => {
+        [
+            concat!($base, "_de"),
+            concat!($base, "_fr"),
+            concat!($base, "_it"),
+            concat!($base, "_es"),
+            concat!($base, "_gr"),
+            concat!($base, "_pt"),
+            concat!($base, "_be"),
+            concat!($base, "_nl"),
+        ]
+    };
+}
+
+/// Un indicateur du panneau disponible aussi pour chaque pays de `COUNTRIES`.
+///
+/// Les 8 pays arrivent en une seule requête (clé « M.DE+FR+….N.000000.4D0.ANR ») :
+/// la BCE met environ 2 s à répondre, quelle que soit la quantité de données.
+pub struct CountryDef {
+    /// Ligne du panneau (série zone euro de `SERIES`) : « hicp », « unemployment »…
+    pub base: &'static str,
+    /// Identifiant de chaque pays, dans l'ordre de `COUNTRIES` (ex. « hicp_fr »).
+    pub ids: [&'static str; 8],
+    pub flow: &'static str,
+    /// Clé avant et après le code pays : « M. » + « FR » + « .N.000000.4D0.ANR ».
+    pub prefix: &'static str,
+    pub suffix: &'static str,
+    pub frequency: Frequency,
+}
+
+impl CountryDef {
+    /// Clé complète d'un pays (« de ») ou de plusieurs (« DE+FR+… »).
+    pub fn full_key(&self, countries: &str) -> String {
+        format!(
+            "{}.{}{}{}",
+            self.flow,
+            self.prefix,
+            countries.to_uppercase(),
+            self.suffix
+        )
+    }
+}
+
+/// Indicateurs par pays : mêmes définitions que la série zone euro correspondante.
+pub const BY_COUNTRY: [CountryDef; 4] = [
+    // Inflation IPCH sur 1 an.
+    CountryDef {
+        base: "hicp",
+        ids: by_country!("hicp"),
+        flow: "HICP",
+        prefix: "M.",
+        suffix: ".N.000000.4D0.ANR",
+        frequency: Frequency::Monthly,
+    },
+    // Inflation sous-jacente (hors énergie, alimentation, alcool et tabac).
+    CountryDef {
+        base: "core_inflation",
+        ids: by_country!("core_inflation"),
+        flow: "HICP",
+        prefix: "M.",
+        suffix: ".N.XEF000.4D0.ANR",
+        frequency: Frequency::Monthly,
+    },
+    // Inflation des services.
+    CountryDef {
+        base: "services_inflation",
+        ids: by_country!("services_inflation"),
+        flow: "HICP",
+        prefix: "M.",
+        suffix: ".N.SERV00.4D0.ANR",
+        frequency: Frequency::Monthly,
+    },
+    // Taux de chômage, 15-74 ans, CVS.
+    CountryDef {
+        base: "unemployment",
+        ids: by_country!("unemployment"),
+        flow: "LFSI",
+        prefix: "M.",
+        suffix: ".S.UNEHRT.TOTAL0.15_74.T",
+        frequency: Frequency::Monthly,
+    },
+];
+
+/// Ce qu'il faut savoir d'une série téléchargée (zone euro ou pays).
+pub struct SeriesInfo {
+    /// Clé BCE complète (pour vérifier que le cache correspond à la définition actuelle).
+    pub key: String,
+    pub frequency: Frequency,
+    pub step: bool,
+}
+
+/// Clé, fréquence et forme d'une série de `SERIES` ou de `BY_COUNTRY` (None : inconnue).
+pub fn series_info(id: &str) -> Option<SeriesInfo> {
+    if let Some(def) = SERIES.iter().find(|d| d.id == id) {
+        return Some(SeriesInfo {
+            key: def.full_key(),
+            frequency: def.frequency,
+            step: def.step,
+        });
+    }
+    BY_COUNTRY.iter().find_map(|def| {
+        let k = def.ids.iter().position(|c| *c == id)?;
+        Some(SeriesInfo {
+            key: def.full_key(COUNTRIES[k]),
+            frequency: def.frequency,
+            step: false,
+        })
+    })
+}
+
 /// Client HTTP réutilisé pour toutes les requêtes.
 pub fn new_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -317,6 +436,37 @@ pub fn new_agent() -> ureq::Agent {
 /// Seules les colonnes TIME_PERIOD et OBS_VALUE sont utilisées ; les valeurs
 /// manquantes (vides, « NaN ») sont ignorées.
 pub fn parse_csv(body: &str) -> Result<Vec<Observation>, String> {
+    let mut observations: Vec<Observation> =
+        parse_rows(body)?.into_iter().map(|(_, o)| o).collect();
+    sort_by_date(&mut observations);
+    Ok(observations)
+}
+
+/// Lit un CSV de la BCE qui contient plusieurs pays (colonne REF_AREA) : observations
+/// triées par date, pour chaque pays (code en minuscules, ex. « fr »).
+pub fn parse_csv_by_area(body: &str) -> Result<Vec<(String, Vec<Observation>)>, String> {
+    let mut areas: Vec<(String, Vec<Observation>)> = Vec::new();
+    for (area, observation) in parse_rows(body)? {
+        let area = area.to_lowercase();
+        match areas.iter_mut().find(|(a, _)| *a == area) {
+            Some((_, list)) => list.push(observation),
+            None => areas.push((area, vec![observation])),
+        }
+    }
+    for (_, list) in &mut areas {
+        sort_by_date(list);
+    }
+    Ok(areas)
+}
+
+/// Tri par date, sans doublon.
+fn sort_by_date(observations: &mut Vec<Observation>) {
+    observations.sort_by_key(|o| parse_period(&o.date));
+    observations.dedup_by(|a, b| a.date == b.date);
+}
+
+/// Lignes du CSV : (pays de la colonne REF_AREA, vide si absente ; observation).
+fn parse_rows(body: &str) -> Result<Vec<(String, Observation)>, String> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)
         .from_reader(body.as_bytes());
@@ -333,8 +483,9 @@ pub fn parse_csv(body: &str) -> Result<Vec<Observation>, String> {
     };
     let date_col = column("TIME_PERIOD")?;
     let value_col = column("OBS_VALUE")?;
+    let area_col = column("REF_AREA").ok();
 
-    let mut observations = Vec::new();
+    let mut rows = Vec::new();
     for record in reader.records() {
         let record = record.map_err(|e| format!("CSV illisible : {e}"))?;
         let (Some(date), Some(raw)) = (record.get(date_col), record.get(value_col)) else {
@@ -344,37 +495,75 @@ pub fn parse_csv(body: &str) -> Result<Vec<Observation>, String> {
             continue;
         };
         if value.is_finite() && parse_period(date).is_some() {
-            observations.push(Observation {
-                date: date.trim().to_string(),
-                value,
-            });
+            let area = area_col
+                .and_then(|col| record.get(col))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            rows.push((
+                area,
+                Observation {
+                    date: date.trim().to_string(),
+                    value,
+                },
+            ));
         }
     }
-
-    observations.sort_by_key(|o| parse_period(&o.date));
-    observations.dedup_by(|a, b| a.date == b.date);
-    Ok(observations)
+    Ok(rows)
 }
 
-/// Télécharge une URL de l'API et renvoie les observations.
+/// Télécharge une URL de l'API et renvoie le CSV reçu.
 /// `Ok(None)` : la BCE répond qu'il n'y a aucune donnée (HTTP 404).
-fn get(agent: &ureq::Agent, url: &str) -> Result<Option<Vec<Observation>>, String> {
+fn get_csv(agent: &ureq::Agent, url: &str) -> Result<Option<String>, String> {
     let mut response = agent
         .get(url)
         .call()
         .map_err(|e| format!("BCE injoignable ({e})"))?;
 
     match response.status().as_u16() {
-        200 => {
-            let body = response
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| format!("réponse interrompue ({e})"))?;
-            parse_csv(&body).map(Some)
-        }
+        200 => response
+            .body_mut()
+            .read_to_string()
+            .map(Some)
+            .map_err(|e| format!("réponse interrompue ({e})")),
         404 => Ok(None),
         code => Err(format!("la BCE a répondu avec le code HTTP {code}")),
     }
+}
+
+/// Télécharge une URL de l'API et renvoie les observations (`Ok(None)` : aucune donnée).
+fn get(agent: &ureq::Agent, url: &str) -> Result<Option<Vec<Observation>>, String> {
+    match get_csv(agent, url)? {
+        Some(body) => parse_csv(&body).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Télécharge un indicateur pour les 8 pays en une requête, depuis `start` (inclus).
+/// Renvoie (identifiant, observations) pour chaque pays reçu ; un pays sans donnée est
+/// simplement absent (affiché « — »), sans faire échouer les autres.
+pub fn fetch_by_country(
+    agent: &ureq::Agent,
+    def: &CountryDef,
+    start: NaiveDate,
+) -> Result<Vec<(&'static str, Vec<Observation>)>, String> {
+    let all = COUNTRIES.join("+");
+    let key = def.full_key(&all);
+    let (flow, key) = key.split_once('.').unwrap_or((def.flow, &key));
+    let url = format!("{API_BASE}/{flow}/{key}?format=csvdata&detail=dataonly&startPeriod={start}");
+    let body = get_csv(agent, &url)?.ok_or_else(|| format!("séries {} introuvables", def.base))?;
+    let received: Vec<_> = parse_csv_by_area(&body)?
+        .into_iter()
+        .filter(|(_, observations)| !observations.is_empty())
+        .filter_map(|(area, observations)| {
+            let k = COUNTRIES.iter().position(|c| *c == area)?;
+            Some((def.ids[k], observations))
+        })
+        .collect();
+    if received.is_empty() {
+        return Err(format!("aucune donnée pour {}", def.full_key(&all)));
+    }
+    Ok(received)
 }
 
 /// Télécharge une série depuis `start` (inclus).
@@ -473,14 +662,68 @@ mod tests {
                 }
             }
         }
+        for def in &BY_COUNTRY {
+            match fetch_by_country(&agent, def, start) {
+                Ok(countries) => println!("OK   {:<18} {} pays", def.base, countries.len()),
+                Err(e) => {
+                    println!("ÉCHEC {:<18} {e}", def.base);
+                    failures.push(def.base);
+                }
+            }
+        }
         assert!(failures.is_empty(), "séries en échec : {failures:?}");
     }
 
     #[test]
     fn series_avec_identifiants_uniques() {
-        let mut ids: Vec<_> = SERIES.iter().map(|s| s.id).collect();
+        let mut ids: Vec<_> = SERIES
+            .iter()
+            .map(|s| s.id)
+            .chain(BY_COUNTRY.iter().flat_map(|d| d.ids))
+            .collect();
+        let total = ids.len();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), SERIES.len());
+        assert_eq!(ids.len(), total);
+        assert_eq!(total, 30 + 4 * 8);
+        // Chaque indicateur par pays a sa série zone euro, de même fréquence.
+        for def in &BY_COUNTRY {
+            let euro = SERIES.iter().find(|s| s.id == def.base).unwrap();
+            assert_eq!(euro.frequency, def.frequency);
+        }
+    }
+
+    #[test]
+    fn series_par_pays() {
+        // Identifiants dans l'ordre de COUNTRIES : « hicp_fr » est le 2e.
+        assert_eq!(BY_COUNTRY[0].ids[1], "hicp_fr");
+        assert_eq!(BY_COUNTRY[3].ids[7], "unemployment_nl");
+        let info = series_info("core_inflation_it").unwrap();
+        assert_eq!(info.key, "HICP.M.IT.N.XEF000.4D0.ANR");
+        assert_eq!(
+            BY_COUNTRY[3].full_key("DE+FR"),
+            "LFSI.M.DE+FR.S.UNEHRT.TOTAL0.15_74.T"
+        );
+        assert_eq!(
+            series_info("hicp").unwrap().key,
+            "HICP.M.U2.N.000000.4D0.ANR"
+        );
+        assert!(series_info("inconnu").is_none());
+    }
+
+    #[test]
+    fn lit_un_csv_avec_plusieurs_pays() {
+        let csv = "KEY,FREQ,REF_AREA,ADJUSTMENT,TIME_PERIOD,OBS_VALUE\n\
+            LFSI.M.FR.S,M,FR,S,2026-09,8.5\n\
+            LFSI.M.DE.S,M,DE,S,2026-09,4.1\n\
+            LFSI.M.FR.S,M,FR,S,2026-08,8.3\n\
+            LFSI.M.DE.S,M,DE,S,2026-08,NaN\n";
+        let areas = parse_csv_by_area(csv).unwrap();
+        assert_eq!(areas.len(), 2);
+        let (area, fr) = &areas[0];
+        assert_eq!(area, "fr");
+        assert_eq!(fr.len(), 2);
+        assert_eq!(fr[0].date, "2026-08"); // trié par date
+        assert_eq!(areas[1].1.len(), 1); // valeur manquante ignorée
     }
 }

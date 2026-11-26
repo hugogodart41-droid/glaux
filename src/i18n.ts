@@ -76,6 +76,14 @@ const fr = {
 
   // Liste
   derivedSection: "Calculés par Glaux",
+  euroSection: "Zone euro",
+  euroHint: "Indicateurs de la zone euro dans son ensemble (taux de la BCE, marchés, monnaie et crédit).",
+  countrySection: "Zone euro ou par pays",
+  countryHint: "Ouvrez un indicateur pour choisir la zone euro ou un pays.",
+  countriesSwitch: "Zone euro ou pays affiché sur cette ligne",
+  /** Survol d'un pays : « 3,4 % · zone euro 2,9 % ». */
+  countryReadout: (value: string, euroName: string, euroValue: string) => `${value} · ${euroName} ${euroValue}`,
+  euroDashed: "pointillés : zone euro",
   derivedHint: "Indicateurs calculés à partir des séries de la BCE.",
   sparkHint: (low: string, high: string) => `Sur 1 an : plus bas ${low}, plus haut ${high}`,
   /** Sous-titre d'un groupe : unité de ses valeurs (« pb », « % ») et date. */
@@ -85,7 +93,6 @@ const fr = {
   // Écran « Indicateurs affichés »
   customizeTitle: "Indicateurs affichés",
   customizeHelp: "Cliquer sur une ligne pour l'afficher ou la masquer, la faire glisser pour changer l'ordre.",
-  ecbSection: "Séries de la BCE",
   resetLayout: "Par défaut",
   resetLayoutHint: "Revenir à la liste d'origine : tous les indicateurs, dans l'ordre initial",
   keepOne: "Au moins un indicateur reste affiché",
@@ -204,6 +211,13 @@ const en: Strings = {
   updateFailed: (error) => `Update failed (${error}). Click to try again.`,
 
   derivedSection: "Computed by Glaux",
+  euroSection: "Euro area",
+  euroHint: "Indicators for the euro area as a whole (ECB rates, markets, money and credit).",
+  countrySection: "Euro area or by country",
+  countryHint: "Open an indicator to choose the euro area or a country.",
+  countriesSwitch: "Euro area or country shown in this row",
+  countryReadout: (value, euroName, euroValue) => `${value} · ${euroName} ${euroValue}`,
+  euroDashed: "dashed: euro area",
   derivedHint: "Indicators computed from ECB series.",
   sparkHint: (low, high) => `Past year: low ${low}, high ${high}`,
   groupSub: (unit, date) => `in ${unit} · ${date}`,
@@ -211,7 +225,6 @@ const en: Strings = {
 
   customizeTitle: "Displayed indicators",
   customizeHelp: "Click a row to show or hide it, drag it to change the order.",
-  ecbSection: "ECB series",
   resetLayout: "Reset",
   resetLayoutHint: "Back to the original list: every indicator, in the original order",
   keepOne: "At least one indicator stays visible",

@@ -28,6 +28,14 @@ Source : API publique de la BCE (sans clé, sans compte). Les séries sont défi
 les 11 indicateurs BCE du panneau, plus les taux à 10 ans de 8 pays (Allemagne, France, Italie, Espagne, Grèce,
 Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes mensuelles, publiées environ
 3 semaines après la fin du mois). La BCE ne publie pas de taux quotidien par pays.
+- Zone euro ou par pays (V3) : inflation (totale, sous-jacente, services) et chômage existent aussi pour les
+  8 pays (`BY_COUNTRY` dans `ecb.rs` : mêmes clés BCE, `U2` remplacé par le code pays, ex.
+  `HICP.M.FR.N.000000.4D0.ANR`). Une requête par indicateur ramène les 8 pays (clé « DE+FR+… », colonne
+  `REF_AREA`) : la BCE met ~2 s à répondre quelle que soit la taille, d'où 4 requêtes au lieu de 32.
+  Dans la vue détail, des pastilles « ZE DE FR IT… » choisissent la zone euro ou un pays : la ligne du panneau
+  affiche alors ce pays (« France · oct. 2026 ») et la courbe de la zone euro reste en pointillés pour
+  comparer (vue détail et image exportée). Choix enregistré dans prefs.json (`countries`, commande
+  `set_country`) ; les alertes et le taux directeur réel restent calculés sur la zone euro.
 - Taux à 10 ans par pays (V3) : une ligne (« groupe » `yields`) pour 3 pays au plus, choisis par l'utilisateur
   (Allemagne, France, Italie par défaut), en %, variation en points ; juste après « Taux souverain 10 ans »
   (moyenne quotidienne de la zone euro), courbes superposées en vue détail et à l'export.
@@ -48,7 +56,7 @@ Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en ca
 - À ne pas confondre : « Taux souverain 10 ans » (`yield_10y`) = échantillon `G_N_C`, toutes notations (taux
   moyen de la zone euro, plus élevé que le 10 ans AAA : 3,93 % contre 3,31 % le 24/11/2026).
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
-Téléchargement : 4 séries à la fois (`PARALLEL_DOWNLOADS`), 30 séries en tout.
+Téléchargement : 4 requêtes à la fois (`PARALLEL_DOWNLOADS`) : 30 séries, plus 4 requêtes par pays (32 séries).
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
 Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
 Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache.
@@ -69,6 +77,7 @@ construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_
 - « Quotidien » : taux de dépôt (valeur en vigueur reportée sur chaque date), €STR, taux 10 ans, EUR/USD, pente (pb).
 - « Mensuel » : inflation (totale, sous-jacente, services), chômage, M3, crédit, taux réel, taux 10 ans des 8 pays,
   écarts avec l'Allemagne des 7 pays (pb), quel que soit l'affichage choisi dans le panneau.
+- « Par pays » : inflation (totale, sous-jacente, services) et chômage des 8 pays (32 colonnes).
 - « Courbe des taux » : taux quotidiens de chaque échéance, de 3 mois à 30 ans.
 - « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
 Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
@@ -77,13 +86,16 @@ Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titr
 
 Icône « réglages » dans l'en-tête (ou ⌘,) : écran « Indicateurs affichés ».
 - Clic sur une ligne (ou Espace) : l'afficher ou la masquer. Le dernier indicateur affiché ne se masque pas.
-- Glisser une ligne (ou ↑ ↓ au clavier) : changer l'ordre, à l'intérieur de sa section. Les séries de la BCE
+- Trois rubriques, dans cet ordre (`Section` dans `store.rs`) : « Zone euro » (taux de la BCE, €STR, taux
+  souverain 10 ans, courbe AAA, EUR/USD, M3, crédit), « Zone euro ou par pays » (inflation, sous-jacente,
+  services, chômage, taux 10 ans par pays), « Calculés par Glaux ».
+- Glisser une ligne (ou ↑ ↓ au clavier) : changer l'ordre, à l'intérieur de sa rubrique. Les séries de la BCE
   restent avant les indicateurs calculés par Glaux, pour ne pas mélanger données officielles et calculs.
 - Lignes masquées par défaut (`DEFAULT_HIDDEN` dans `store.rs`) : prefs.json ne retient que l'écart avec
   l'affichage par défaut (`hidden` : lignes habituelles masquées ; `shown` : lignes masquées par défaut affichées).
 - Taux par pays et écarts de taux : pastilles des pays sous la ligne (3 au plus, au moins 1) ; enregistrées
   dans `yields` et `spreads` (`CHOOSABLE` dans `store.rs`, commande `set_selection`).
-- « Par défaut » (`reset_layout`) : ordre d'origine, lignes habituelles, pays par défaut.
+- « Par défaut » (`reset_layout`) : ordre d'origine, lignes habituelles, pays par défaut, zone euro partout.
 - Enregistré dans `prefs.json` (`order`, `hidden`, `shown`, `yields`, `spreads`) par Rust (`store.rs`, `set_layout`, `set_selection`). Une ligne ajoutée par
   une future version se place en fin de sa section ; un identifiant inconnu est ignoré.
 - Les alertes, l'agenda et l'export Excel ne dépendent pas de ce choix.

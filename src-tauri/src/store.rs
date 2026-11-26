@@ -22,7 +22,7 @@ use crate::alerts::{new_inflation_alert, rate_change_alert, Alert};
 use crate::data::{
     history, real_rate, sparkline, spread, summarize, Frequency, Observation, Summary,
 };
-use crate::ecb::{self, SERIES};
+use crate::ecb::{self, BY_COUNTRY, COUNTRIES, SERIES};
 use crate::i18n::Lang;
 
 /// Au-delà de cet âge, les données sont retéléchargées.
@@ -79,6 +79,9 @@ struct Prefs {
     spreads: Vec<String>,
     /// Pays affichés dans la ligne des taux à 10 ans par pays (ex. « yield_fr ») ; vide : choix par défaut.
     yields: Vec<String>,
+    /// Pays choisi pour chaque indicateur « zone euro ou par pays » (ex. « hicp » → « fr ») ;
+    /// absent : zone euro.
+    countries: BTreeMap<String, String>,
 }
 
 impl Default for Prefs {
@@ -92,6 +95,7 @@ impl Default for Prefs {
             shown: Vec::new(),
             spreads: Vec::new(),
             yields: Vec::new(),
+            countries: BTreeMap::new(),
         }
     }
 }
@@ -192,9 +196,9 @@ pub const CURVE: [&str; 11] = [
     "yc_30y",
 ];
 
-/// Lignes du panneau dans l'ordre par défaut : les séries BCE affichées (un groupe, comme la
-/// courbe des taux, prend la place de son premier membre), puis les indicateurs calculés par
-/// Glaux (les écarts de taux n'occupent qu'une ligne, « spreads »).
+/// Lignes du panneau dans l'ordre par défaut, rangées par rubrique (`Section`) : les séries
+/// BCE affichées (un groupe, comme la courbe des taux, prend la place de son premier membre),
+/// puis les indicateurs calculés par Glaux (les écarts de taux n'occupent qu'une ligne).
 pub fn default_rows() -> Vec<&'static str> {
     let mut rows: Vec<&'static str> = Vec::new();
     let candidates = SERIES
@@ -212,14 +216,34 @@ pub fn default_rows() -> Vec<&'static str> {
             rows.push(row);
         }
     }
+    rows.sort_by_key(|row| section_of(row)); // tri stable : ordre de SERIES dans chaque rubrique
     rows
 }
 
-/// Vrai pour une ligne calculée par Glaux (indicateur calculé, ou groupe d'indicateurs calculés).
-fn is_derived_row(row: &str) -> bool {
-    DERIVED
+/// Rubrique d'une ligne du panneau, dans l'ordre d'affichage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Section {
+    /// « Zone euro » : taux de la BCE, marchés, monnaie et crédit (zone euro seulement).
+    Euro,
+    /// « Zone euro ou par pays » : inflation, chômage (pays au choix), taux 10 ans par pays.
+    Country,
+    /// « Calculés par Glaux ».
+    Derived,
+}
+
+/// Rubrique d'une ligne : calculée par Glaux, disponible par pays, ou zone euro seulement.
+fn section_of(row: &str) -> Section {
+    let derived = DERIVED
         .iter()
-        .any(|(id, _)| *id == row || group_of(id) == Some(row))
+        .any(|(id, _)| *id == row || group_of(id) == Some(row));
+    if derived {
+        Section::Derived
+    } else if row == "yields" || BY_COUNTRY.iter().any(|def| def.base == row) {
+        Section::Country
+    } else {
+        Section::Euro
+    }
 }
 
 /// Pays enregistrés pour une ligne à choix (None : groupe sans choix de pays).
@@ -235,15 +259,15 @@ fn chosen_in<'a>(prefs: &'a Prefs, group: &str) -> Option<&'a Vec<String>> {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RowView {
     pub id: &'static str,
-    /// Ligne calculée par Glaux (section « Calculés par Glaux »).
-    pub derived: bool,
+    /// Rubrique de la ligne (« euro », « country », « derived »).
+    pub section: Section,
     pub hidden: bool,
 }
 
 /// Range les lignes selon le choix de l'utilisateur :
 /// - identifiants inconnus ignorés (fichier modifié à la main, ligne retirée de Glaux) ;
-/// - lignes absentes du choix (nouvelles dans une version de Glaux) : à la fin de leur section ;
-/// - les séries BCE restent toujours avant les indicateurs calculés ;
+/// - lignes absentes du choix (nouvelles dans une version de Glaux) : à la fin de leur rubrique ;
+/// - rubriques toujours dans le même ordre : zone euro, zone euro ou par pays, calculés ;
 /// - masquée : choisie comme telle (`hidden`), ou masquée par défaut et pas affichée (`shown`) ;
 /// - jamais toutes masquées (sinon le panneau serait vide) : retour à l'affichage par défaut.
 fn arrange_rows(order: &[String], hidden: &[String], shown: &[String]) -> Vec<RowView> {
@@ -255,12 +279,12 @@ fn arrange_rows(order: &[String], hidden: &[String], shown: &[String]) -> Vec<Ro
         .into_iter()
         .map(|id| RowView {
             id,
-            derived: is_derived_row(id),
+            section: section_of(id),
             hidden: is_hidden(id),
         })
         .collect();
     // Tri stable : à rang égal (lignes absentes du choix), l'ordre par défaut est conservé.
-    rows.sort_by_key(|row| (row.derived, rank(row.id)));
+    rows.sort_by_key(|row| (row.section, rank(row.id)));
     if rows.iter().all(|row| row.hidden) {
         rows.iter_mut()
             .for_each(|row| row.hidden = DEFAULT_HIDDEN.contains(&row.id));
@@ -269,12 +293,13 @@ fn arrange_rows(order: &[String], hidden: &[String], shown: &[String]) -> Vec<Ro
 }
 
 /// Nom sûr pour un fichier exporté : l'identifiant connu correspondant (série affichée,
-/// indicateur calculé ou groupe), jamais le texte reçu de l'interface.
+/// série d'un pays, indicateur calculé ou groupe), jamais le texte reçu de l'interface.
 pub fn export_name(id: &str) -> Option<&'static str> {
     SERIES
         .iter()
         .filter(|def| def.shown)
         .map(|def| def.id)
+        .chain(BY_COUNTRY.iter().flat_map(|def| def.ids))
         .chain(DERIVED.iter().map(|(derived, _)| *derived))
         .chain(["yields", "spreads", "curve"])
         .find(|known| *known == id)
@@ -370,6 +395,9 @@ pub struct DashboardView {
     /// Pays affichés dans chaque ligne à choix (1 à 3) : « yields » → [« yield_de », …],
     /// « spreads » → [« spread_fr », …].
     pub selections: BTreeMap<&'static str, Vec<&'static str>>,
+    /// Pays choisi pour les indicateurs « zone euro ou par pays » (ex. « hicp » → « fr ») ;
+    /// absent : zone euro.
+    pub countries: BTreeMap<&'static str, &'static str>,
     /// Prochaines décisions BCE et inflations flash.
     pub agenda: AgendaView,
     /// Notifications activées.
@@ -448,12 +476,42 @@ impl Store {
                 .series
                 .iter()
                 .any(|s| s.id == def.id && s.key == def.full_key())
+        }) || BY_COUNTRY.iter().any(|def| {
+            // Par pays : au moins un pays en cache (un pays sans donnée ne relance rien).
+            !def.ids.iter().any(|id| !cached(&cache, id).is_empty())
         });
         match cache.last_success {
             None => true,
             Some(_) if missing => true,
             Some(t) => Utc::now().timestamp() - t > MAX_AGE.as_secs() as i64,
         }
+    }
+
+    /// Téléchargement n° `i` : une série de `SERIES`, ou un indicateur de `BY_COUNTRY`
+    /// pour tous les pays (au-delà de `SERIES.len()`).
+    fn download_task(&self, i: usize, start: NaiveDate) -> Result<Vec<CachedSeries>, String> {
+        if let Some(def) = SERIES.get(i) {
+            let observations = ecb::fetch_series(&self.agent, def, start)?;
+            return Ok(vec![CachedSeries {
+                id: def.id.to_string(),
+                key: def.full_key(),
+                observations,
+            }]);
+        }
+        let def = BY_COUNTRY
+            .get(i - SERIES.len())
+            .ok_or("téléchargement inconnu")?;
+        let countries = ecb::fetch_by_country(&self.agent, def, start)?;
+        Ok(countries
+            .into_iter()
+            .filter_map(|(id, observations)| {
+                Some(CachedSeries {
+                    id: id.to_string(),
+                    key: ecb::series_info(id)?.key,
+                    observations,
+                })
+            })
+            .collect())
     }
 
     /// Réserve l'actualisation. `None` si une actualisation est déjà en cours.
@@ -474,9 +532,11 @@ impl Store {
             .unwrap_or(today);
 
         // Réseau d'abord, sans bloquer le cache (l'interface reste réactive) :
-        // `PARALLEL_DOWNLOADS` fils se partagent les séries, chacun prend la suivante libre.
+        // `PARALLEL_DOWNLOADS` fils se partagent les requêtes, chacun prend la suivante libre :
+        // une par série de `SERIES`, puis une par indicateur de `BY_COUNTRY` (8 pays d'un coup).
+        let tasks = SERIES.len() + BY_COUNTRY.len();
         let next = AtomicUsize::new(0);
-        let mut results: Vec<(usize, Result<Vec<Observation>, String>)> =
+        let mut results: Vec<(usize, Result<Vec<CachedSeries>, String>)> =
             std::thread::scope(|scope| {
                 let workers: Vec<_> = (0..PARALLEL_DOWNLOADS)
                     .map(|_| {
@@ -484,8 +544,10 @@ impl Store {
                             let mut done = Vec::new();
                             loop {
                                 let i = next.fetch_add(1, Ordering::SeqCst);
-                                let Some(def) = SERIES.get(i) else { break };
-                                done.push((i, ecb::fetch_series(&self.agent, def, start)));
+                                if i >= tasks {
+                                    break;
+                                }
+                                done.push((i, self.download_task(i, start)));
                             }
                             done
                         })
@@ -501,14 +563,9 @@ impl Store {
         let mut fresh = Vec::new();
         let mut errors = Vec::new();
         for (i, result) in results {
-            let def = &SERIES[i];
             match result {
-                Ok(observations) => fresh.push(CachedSeries {
-                    id: def.id.to_string(),
-                    key: def.full_key(),
-                    observations,
-                }),
-                Err(e) => errors.push(format!("{} : {e}", def.id)),
+                Ok(series) => fresh.extend(series),
+                Err(e) => errors.push(format!("{} : {e}", task_name(i))),
             }
         }
 
@@ -624,6 +681,39 @@ impl Store {
         prefs.shown.clear();
         prefs.spreads.clear();
         prefs.yields.clear();
+        prefs.countries.clear();
+        self.save_prefs(&prefs)
+    }
+
+    /// Pays choisi pour chaque indicateur « zone euro ou par pays » (absent : zone euro).
+    pub fn countries(&self) -> BTreeMap<&'static str, &'static str> {
+        let Ok(prefs) = self.prefs.lock() else {
+            return BTreeMap::new();
+        };
+        BY_COUNTRY
+            .iter()
+            .filter_map(|def| {
+                let chosen = prefs.countries.get(def.base)?;
+                let country = COUNTRIES.iter().find(|c| *c == chosen)?;
+                Some((def.base, *country))
+            })
+            .collect()
+    }
+
+    /// Choisit le pays d'un indicateur (`None` : zone euro). Refuse un indicateur ou un
+    /// pays inconnu.
+    pub fn set_country(&self, row: &str, country: Option<&str>) -> Result<(), String> {
+        if !BY_COUNTRY.iter().any(|def| def.base == row) {
+            return Err(format!("indicateur sans choix de pays : {row}"));
+        }
+        if country.is_some_and(|c| !COUNTRIES.contains(&c)) {
+            return Err("pays inconnu".into());
+        }
+        let mut prefs = self.prefs.lock().map_err(|_| "préférences indisponibles")?;
+        match country {
+            Some(c) => prefs.countries.insert(row.to_string(), c.to_string()),
+            None => prefs.countries.remove(row),
+        };
         self.save_prefs(&prefs)
     }
 
@@ -738,7 +828,7 @@ impl Store {
         ))
     }
 
-    /// Toutes les séries (affichées, taux par pays, calculées) pour l'export Excel.
+    /// Toutes les séries (affichées, par pays, calculées) pour l'export Excel.
     pub fn export_series(&self) -> Vec<ExportSeries> {
         let Ok(cache) = self.cache.lock() else {
             return Vec::new();
@@ -746,6 +836,7 @@ impl Store {
         SERIES
             .iter()
             .map(|def| def.id)
+            .chain(BY_COUNTRY.iter().flat_map(|def| def.ids))
             .chain(DERIVED.iter().map(|(id, _)| *id))
             .filter_map(|id| {
                 let (observations, _, step) = series_data(&cache, id)?;
@@ -753,7 +844,7 @@ impl Store {
                     id,
                     observations: observations.into_owned(),
                     step,
-                    key: SERIES.iter().find(|d| d.id == id).map(|d| d.full_key()),
+                    key: ecb::series_info(id).map(|info| info.key),
                 })
             })
             .collect()
@@ -770,11 +861,18 @@ impl Store {
         let empty = CacheFile::default();
         let data = cache.as_deref().unwrap_or(&empty);
 
-        // Séries BCE du panneau et membres de groupe (courbe des taux), puis indicateurs calculés.
+        // Séries BCE du panneau et membres de groupe (courbe des taux), séries par pays
+        // (l'interface affiche celle du pays choisi, sans attendre Rust), puis calculées.
         let ids = SERIES
             .iter()
             .filter(|def| def.shown || group_of(def.id).is_some())
             .map(|def| (def.id, false))
+            .chain(
+                BY_COUNTRY
+                    .iter()
+                    .flat_map(|def| def.ids)
+                    .map(|id| (id, false)),
+            )
             .chain(DERIVED.iter().map(|(id, _)| (*id, true)));
         let indicators = ids
             .filter_map(|(id, derived)| {
@@ -801,6 +899,7 @@ impl Store {
             error: self.last_error.lock().ok().and_then(|e| e.clone()),
             rows: self.rows(),
             selections: self.selections(),
+            countries: self.countries(),
             agenda: agenda_view(today),
             notifications: self.notifications_enabled(),
             notification_error: None,
@@ -813,15 +912,25 @@ impl Store {
     }
 }
 
-/// Observations en cache d'une série BCE (vide si absente ou si sa clé a changé).
+/// Nom d'un téléchargement (voir `download_task`), pour les messages d'erreur.
+fn task_name(i: usize) -> &'static str {
+    SERIES
+        .get(i)
+        .map(|def| def.id)
+        .or_else(|| BY_COUNTRY.get(i - SERIES.len()).map(|def| def.base))
+        .unwrap_or("?")
+}
+
+/// Observations en cache d'une série BCE, zone euro ou pays (vide si absente ou si sa clé
+/// a changé).
 fn cached<'a>(cache: &'a CacheFile, id: &str) -> &'a [Observation] {
-    let Some(def) = SERIES.iter().find(|d| d.id == id) else {
+    let Some(info) = ecb::series_info(id) else {
         return &[];
     };
     cache
         .series
         .iter()
-        .find(|s| s.id == def.id && s.key == def.full_key())
+        .find(|s| s.id == id && s.key == info.key)
         .map(|s| s.observations.as_slice())
         .unwrap_or_default()
 }
@@ -832,8 +941,8 @@ fn series_data<'a>(
     cache: &'a CacheFile,
     id: &str,
 ) -> Option<(Cow<'a, [Observation]>, Frequency, bool)> {
-    if let Some(def) = SERIES.iter().find(|d| d.id == id) {
-        return Some((Cow::Borrowed(cached(cache, id)), def.frequency, def.step));
+    if let Some(info) = ecb::series_info(id) {
+        return Some((Cow::Borrowed(cached(cache, id)), info.frequency, info.step));
     }
     let (_, frequency) = DERIVED.iter().find(|(derived, _)| *derived == id)?;
     let observations = match id {
@@ -857,10 +966,9 @@ mod tests {
     use super::*;
 
     fn series(id: &str, data: &[(&str, f64)]) -> CachedSeries {
-        let def = SERIES.iter().find(|d| d.id == id).unwrap();
         CachedSeries {
             id: id.to_string(),
-            key: def.full_key(),
+            key: ecb::series_info(id).unwrap().key,
             observations: data
                 .iter()
                 .map(|(date, value)| Observation {
@@ -910,7 +1018,8 @@ mod tests {
         assert_eq!(export_name("eurusd"), Some("eurusd"));
         assert_eq!(export_name("real_rate"), Some("real_rate")); // calculé : refusé avant la V2
         assert_eq!(export_name("spreads"), Some("spreads"));
-        assert_eq!(export_name("yield_fr"), None); // série cachée
+        assert_eq!(export_name("yield_fr"), None); // membre de groupe : exporté avec « yields »
+        assert_eq!(export_name("hicp_fr"), Some("hicp_fr")); // inflation française
         assert_eq!(export_name("../../etc"), None);
     }
 
@@ -986,6 +1095,13 @@ mod tests {
         if let Ok(mut cache) = store.cache.lock() {
             cache.series = SERIES.iter().map(|d| series(d.id, &[])).collect();
         }
+        assert!(store.needs_refresh()); // séries par pays absentes (cache de la v0.2)
+        if let Ok(mut cache) = store.cache.lock() {
+            // Un seul pays reçu par indicateur suffit (un pays sans donnée ne relance rien).
+            for def in &BY_COUNTRY {
+                cache.series.push(series(def.ids[1], &[("2026-10", 1.0)]));
+            }
+        }
         assert!(!store.needs_refresh());
         let _ = fs::remove_dir_all(dir);
     }
@@ -1048,19 +1164,22 @@ mod tests {
         assert_eq!(
             default_rows(),
             [
+                // Zone euro
                 "deposit_rate",
-                "hicp",
-                "core_inflation",
-                "services_inflation",
                 "estr",
                 "yield_10y",
-                "yields",
                 "curve",
                 "eurusd",
-                "unemployment",
                 "m3",
                 "loans_nfc",
                 "loans_hh",
+                // Zone euro ou par pays
+                "hicp",
+                "core_inflation",
+                "services_inflation",
+                "unemployment",
+                "yields",
+                // Calculés par Glaux
                 "real_rate",
                 "slope",
                 "spreads"
@@ -1075,23 +1194,31 @@ mod tests {
             visible,
             [
                 "deposit_rate",
-                "hicp",
                 "estr",
                 "yield_10y",
-                "yields",
                 "curve",
                 "eurusd",
+                "hicp",
                 "unemployment",
+                "yields",
                 "real_rate",
                 "slope",
                 "spreads"
             ]
         );
-        assert!(!rows[0].derived && rows[15].derived); // taux de dépôt : BCE ; écarts : calculés
-        let curve = rows.iter().find(|r| r.id == "curve").unwrap();
-        assert!(!curve.derived); // courbe : données BCE
-        let yields = rows.iter().find(|r| r.id == "yields").unwrap();
-        assert!(!yields.derived); // taux par pays : données BCE
+        let section = |id: &str| rows.iter().find(|r| r.id == id).unwrap().section;
+        assert_eq!(section("deposit_rate"), Section::Euro);
+        assert_eq!(section("curve"), Section::Euro); // courbe AAA : zone euro seulement
+        assert_eq!(section("m3"), Section::Euro);
+        assert_eq!(section("hicp"), Section::Country);
+        assert_eq!(section("unemployment"), Section::Country);
+        assert_eq!(section("yields"), Section::Country);
+        assert_eq!(section("real_rate"), Section::Derived); // calculé avec l'inflation zone euro
+        assert_eq!(section("spreads"), Section::Derived);
+        assert_eq!(
+            serde_json::to_string(&Section::Country).unwrap(),
+            "\"country\""
+        );
     }
 
     #[test]
@@ -1103,20 +1230,20 @@ mod tests {
         assert_eq!(
             ids(&rows),
             [
-                "hicp",
                 "deposit_rate",
-                "core_inflation", // absentes du choix : en fin de section, ordre par défaut
-                "services_inflation",
-                "estr",
+                "estr", // absentes du choix : en fin de rubrique, ordre par défaut
                 "yield_10y",
-                "yields",
                 "curve",
                 "eurusd",
-                "unemployment",
                 "m3",
                 "loans_nfc",
                 "loans_hh",
-                "spreads", // les calculés restent après les séries BCE
+                "hicp", // l'inflation reste dans sa rubrique « zone euro ou par pays »
+                "core_inflation",
+                "services_inflation",
+                "unemployment",
+                "yields",
+                "spreads", // les calculés restent en dernier
                 "slope",
                 "real_rate"
             ]
@@ -1326,6 +1453,60 @@ mod tests {
             .is_err());
         store.reset_layout().unwrap();
         assert_eq!(store.selections(), defaults);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pays_choisi_par_indicateur() {
+        let dir = temp_dir("pays-indicateur");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        assert!(store.countries().is_empty()); // zone euro par défaut
+        store.set_country("hicp", Some("fr")).unwrap();
+        store.set_country("unemployment", Some("es")).unwrap();
+        assert!(store.set_country("eurusd", Some("fr")).is_err()); // zone euro seulement
+        assert!(store.set_country("hicp", Some("us")).is_err());
+        let reopened = Store::load(dir.clone(), Lang::Fr);
+        let countries = reopened.countries();
+        assert_eq!(countries.get("hicp"), Some(&"fr"));
+        assert_eq!(countries.get("unemployment"), Some(&"es"));
+        reopened.set_country("hicp", None).unwrap(); // retour à la zone euro
+        assert_eq!(reopened.countries().get("hicp"), None);
+        reopened.reset_layout().unwrap();
+        assert!(reopened.countries().is_empty());
+
+        // Les séries par pays arrivent dans la vue, sans mini-courbe manquante.
+        if let Ok(mut cache) = reopened.cache.lock() {
+            cache.series = vec![
+                series("hicp", &[("2026-09", 3.8), ("2026-10", 4.0)]),
+                series("hicp_fr", &[("2026-09", 3.2), ("2026-10", 3.7)]),
+            ];
+        }
+        let view = reopened.view(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
+        let fr = view.indicators.iter().find(|i| i.id == "hicp_fr").unwrap();
+        assert_eq!(fr.summary.latest.as_ref().unwrap().value, 3.7);
+        assert!(fr.group.is_none() && !fr.derived);
+        assert!(view.indicators.iter().any(|i| i.id == "unemployment_nl")); // vide mais présent
+        assert_eq!(
+            reopened
+                .history(
+                    "hicp_fr",
+                    12,
+                    NaiveDate::from_ymd_opt(2026, 11, 25).unwrap()
+                )
+                .unwrap()
+                .len(),
+            2
+        );
+        // Le taux réel reste calculé avec l'inflation de la zone euro (2,5 − 4,0), même si
+        // l'utilisateur affiche l'inflation française.
+        reopened.set_country("hicp", Some("fr")).unwrap();
+        if let Ok(mut cache) = reopened.cache.lock() {
+            cache
+                .series
+                .push(series("deposit_rate", &[("2026-09-17", 2.5)]));
+            let (real, _, _) = series_data(&cache, "real_rate").unwrap();
+            assert_eq!(real.last().unwrap().value, -1.5);
+        }
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -1,7 +1,9 @@
 // Export Excel des historiques (bouton du panneau) : un fichier .xlsx construit à partir du
-// cache, sans réseau, avec trois feuilles :
+// cache, sans réseau, avec ces feuilles :
 // - « Quotidien » : taux de dépôt, €STR, taux souverain 10 ans, EUR/USD, pente ;
 // - « Mensuel » : inflation, chômage, taux réel, taux 10 ans par pays, écarts avec l'Allemagne ;
+// - « Par pays » : inflation (totale, sous-jacente, services) et chômage des 8 pays ;
+// - « Courbe des taux AAA » : taux de chaque échéance ;
 // - « Sources » : série BCE ou calcul de chaque colonne, unité, date du téléchargement.
 // Vraies dates Excel, formats de nombre par unité, ligne d'en-tête figée et filtres.
 // Les titres suivent la langue de Glaux.
@@ -451,6 +453,7 @@ fn write_sources(
     let sheets = [
         (lang.pick("Quotidien", "Daily"), &DAILY[..]),
         (lang.pick("Mensuel", "Monthly"), &MONTHLY[..]),
+        (lang.pick("Par pays", "By country"), &BY_COUNTRY_COLUMNS[..]),
         (
             lang.pick("Courbe des taux AAA", "AAA yield curve"),
             &CURVE_COLUMNS[..],
@@ -503,6 +506,235 @@ const CURVE_COLUMNS: [ColumnDef; 11] = [
     col("yc_30y", "30 ans (%)", "30 years (%)", Unit::Percent, 3),
 ];
 
+/// Feuille « Par pays » : inflation (totale, sous-jacente, services) et chômage de chaque
+/// pays de `COUNTRIES` (ecb.rs), quel que soit le pays choisi dans le panneau.
+const BY_COUNTRY_COLUMNS: [ColumnDef; 32] = [
+    col(
+        "hicp_de",
+        "Inflation, Allemagne (%)",
+        "Inflation, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_fr",
+        "Inflation, France (%)",
+        "Inflation, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_it",
+        "Inflation, Italie (%)",
+        "Inflation, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_es",
+        "Inflation, Espagne (%)",
+        "Inflation, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_gr",
+        "Inflation, Grèce (%)",
+        "Inflation, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_pt",
+        "Inflation, Portugal (%)",
+        "Inflation, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_be",
+        "Inflation, Belgique (%)",
+        "Inflation, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "hicp_nl",
+        "Inflation, Pays-Bas (%)",
+        "Inflation, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_de",
+        "Inflation sous-jacente, Allemagne (%)",
+        "Core inflation, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_fr",
+        "Inflation sous-jacente, France (%)",
+        "Core inflation, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_it",
+        "Inflation sous-jacente, Italie (%)",
+        "Core inflation, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_es",
+        "Inflation sous-jacente, Espagne (%)",
+        "Core inflation, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_gr",
+        "Inflation sous-jacente, Grèce (%)",
+        "Core inflation, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_pt",
+        "Inflation sous-jacente, Portugal (%)",
+        "Core inflation, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_be",
+        "Inflation sous-jacente, Belgique (%)",
+        "Core inflation, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "core_inflation_nl",
+        "Inflation sous-jacente, Pays-Bas (%)",
+        "Core inflation, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_de",
+        "Inflation des services, Allemagne (%)",
+        "Services inflation, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_fr",
+        "Inflation des services, France (%)",
+        "Services inflation, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_it",
+        "Inflation des services, Italie (%)",
+        "Services inflation, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_es",
+        "Inflation des services, Espagne (%)",
+        "Services inflation, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_gr",
+        "Inflation des services, Grèce (%)",
+        "Services inflation, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_pt",
+        "Inflation des services, Portugal (%)",
+        "Services inflation, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_be",
+        "Inflation des services, Belgique (%)",
+        "Services inflation, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "services_inflation_nl",
+        "Inflation des services, Pays-Bas (%)",
+        "Services inflation, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_de",
+        "Chômage, Allemagne (%)",
+        "Unemployment, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_fr",
+        "Chômage, France (%)",
+        "Unemployment, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_it",
+        "Chômage, Italie (%)",
+        "Unemployment, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_es",
+        "Chômage, Espagne (%)",
+        "Unemployment, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_gr",
+        "Chômage, Grèce (%)",
+        "Unemployment, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_pt",
+        "Chômage, Portugal (%)",
+        "Unemployment, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_be",
+        "Chômage, Belgique (%)",
+        "Unemployment, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "unemployment_nl",
+        "Chômage, Pays-Bas (%)",
+        "Unemployment, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+];
+
 /// Construit le classeur et renvoie le fichier .xlsx (en mémoire).
 /// `downloaded` : date et heure du dernier téléchargement, déjà mises en forme.
 pub fn build_workbook(
@@ -516,6 +748,7 @@ pub fn build_workbook(
         let daily = build_table(&DAILY, series);
         let monthly = build_table(&MONTHLY, series);
         let curve = build_table(&CURVE_COLUMNS, series);
+        let by_country = build_table(&BY_COUNTRY_COLUMNS, series);
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Quotidien", "Daily"))?;
@@ -524,6 +757,10 @@ pub fn build_workbook(
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Mensuel", "Monthly"))?;
         write_table(sheet, &MONTHLY, &monthly, lang, true)?;
+
+        let sheet = workbook.add_worksheet();
+        sheet.set_name(lang.pick("Par pays", "By country"))?;
+        write_table(sheet, &BY_COUNTRY_COLUMNS, &by_country, lang, true)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Courbe des taux AAA", "AAA yield curve"))?;
@@ -611,6 +848,13 @@ mod tests {
             let bytes = build_workbook(&data, lang, "25/11/2026 14:58", "0.2.0").unwrap();
             assert!(bytes.starts_with(b"PK")); // un .xlsx est une archive zip
         }
+        // Une colonne par pays et par indicateur, dans l'ordre de COUNTRIES (ecb.rs).
+        let ids: Vec<_> = BY_COUNTRY_COLUMNS.iter().map(|c| c.id).collect();
+        let expected: Vec<_> = crate::ecb::BY_COUNTRY
+            .iter()
+            .flat_map(|def| def.ids)
+            .collect();
+        assert_eq!(ids, expected);
         // Classeur vide (premier lancement hors ligne) : fichier valide quand même.
         assert!(build_workbook(&[], Lang::Fr, "—", "0.2.0").is_ok());
     }

@@ -20,10 +20,13 @@ export type IndicatorView = {
 };
 
 /** Une ligne du panneau : indicateur ou groupe (« yields », « spreads », « curve »), dans l'ordre choisi. */
+/** Rubrique d'une ligne : zone euro seulement, zone euro ou par pays, calculée par Glaux. */
+export type Section = "euro" | "country" | "derived";
+
 export type RowView = {
   id: string;
-  /** Ligne calculée par Glaux (section « Calculés par Glaux »). */
-  derived: boolean;
+  /** Rubrique de la ligne (dans cet ordre dans le panneau). */
+  section: Section;
   /** Masquée par l'utilisateur (écran « Indicateurs affichés »). */
   hidden: boolean;
 };
@@ -37,6 +40,8 @@ export type DashboardView = {
   rows: RowView[];
   /** Pays affichés dans chaque ligne à choix (1 à 3) : { yields: ["yield_de", …], spreads: ["spread_fr", …] }. */
   selections: Record<string, string[]>;
+  /** Pays choisi pour les indicateurs « zone euro ou par pays » (ex. { hicp: "fr" }) ; absent : zone euro. */
+  countries: Record<string, string>;
   /** Dernière actualisation complète réussie (millisecondes). */
   updatedAt: number | null;
   refreshing: boolean;

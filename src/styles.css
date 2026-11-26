@@ -257,6 +257,15 @@ body {
   color: var(--creme);
 }
 
+/* Zone euro en pointillés (indicateur affiché pour un pays) : un tiret à la place du point. */
+.legend-item--dashed::before {
+  width: 12px;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-top: 2px dashed var(--serie, var(--creme));
+}
+
 /* Mini-courbe d'un an, entre le nom et la valeur. */
 .spark {
   flex: 0 0 auto;
@@ -776,7 +785,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Pastilles des pays (ligne des écarts de taux) : choisis = couleur de leur courbe. */
+/* Pastilles des pays (taux et écarts par pays, vue détail) : choisis = couleur de leur courbe. */
 .country-chips {
   display: flex;
   flex-wrap: wrap;
@@ -807,6 +816,12 @@ body {
   color: var(--serie, var(--or));
   border-color: var(--serie, var(--or));
   background: var(--nuit-clair);
+}
+
+/* Vue détail (inflation, chômage) : zone euro ou un pays, une pastille à la fois. */
+.detail__countries .chip {
+  font-size: 11px;
+  padding: 4px 7px;
 }
 
 /* 3 pays déjà choisis, ou dernier pays : non cliquable. */

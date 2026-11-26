@@ -35,20 +35,26 @@ import {
 import { lang, locale, setLang, t } from "./i18n";
 import { curveChart, curveSlope, loadCurve, tenorAt, todayRates, type CurveView } from "./curve";
 import {
+  COUNTRY_CODES,
   CURVE_ID,
   CURVE_TENORS,
+  countryCode,
+  countryName,
+  countrySeries,
   curveDisplay,
   curveSlopeDisplay,
   displayFor,
   groupCandidates,
   groupFor,
+  hasCountries,
   MAX_MEMBERS,
   setGroupSelection,
   tenorName,
+  type Display,
   type GroupDisplay,
 } from "./indicators";
 import { setupTooltips } from "./tooltip";
-import type { DashboardView, IndicatorView, Observation, RowView } from "./types";
+import type { DashboardView, IndicatorView, Observation, RowView, Section } from "./types";
 
 // ---------- État ----------
 
@@ -122,19 +128,24 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 
 // ---------- Liste ----------
 
-function renderRow(indicator: IndicatorView): HTMLLIElement | null {
+/**
+ * Ligne d'un indicateur. `rowId` : la ligne du panneau (« hicp ») quand l'indicateur affiché
+ * est sa version par pays (« hicp_fr ») ; le nom du pays (ou « Zone euro ») précède la date.
+ */
+function renderRow(indicator: IndicatorView, rowId = indicator.id, country?: string): HTMLLIElement | null {
   const display = displayFor(indicator.id);
   if (!display) return null; // indicateur inconnu de l'interface : ignoré
 
   const row = el("li", "indicator");
-  row.dataset.id = indicator.id;
+  row.dataset.id = rowId;
 
   // Survol du nom : à quoi sert cet indicateur.
   const left = el("div", "indicator__left");
   left.setAttribute("data-tooltip", display.hint);
+  const date = formatDateLine(indicator, display);
   left.append(
     el("span", "indicator__label", display.label),
-    el("span", "indicator__sub", formatDateLine(indicator, display)),
+    el("span", "indicator__sub", hasCountries(rowId) ? `${countryName(country)} · ${date}` : date),
   );
 
   const right = el("div", "indicator__right");
@@ -237,31 +248,42 @@ function renderStatus(view: DashboardView): void {
   refresh.classList.toggle("is-spinning", view.refreshing);
 }
 
+/** Titre et infobulle d'une rubrique. */
+function sectionTexts(section: Section): [string, string] {
+  const strings = t();
+  if (section === "euro") return [strings.euroSection, strings.euroHint];
+  if (section === "country") return [strings.countrySection, strings.countryHint];
+  return [strings.derivedSection, strings.derivedHint];
+}
+
 /** Liste du panneau : lignes affichées, dans l'ordre choisi (écran « Indicateurs affichés »). */
 function renderList(view: DashboardView): void {
   const list = $("indicators");
   if (!list) return;
   const nodes: HTMLLIElement[] = [];
-  let sectionShown = false;
+  let section: Section | null = null;
   for (const row of view.rows) {
     if (row.hidden) continue;
-    // Groupe (écarts de taux) : une seule ligne pour ses membres.
-    const indicator = view.indicators.find((i) => i.id === row.id);
+    // Indicateur par pays : la série du pays choisi (« hicp_fr »), ou la zone euro.
+    const country = view.countries?.[row.id];
+    const indicator = view.indicators.find((i) => i.id === countrySeries(row.id, country));
+    // Groupe (taux, écarts, courbe) : une seule ligne pour ses membres.
     const node =
       row.id === CURVE_ID
         ? renderCurveRow(view.indicators)
         : groupFor(row.id)
           ? renderGroupRow(row.id, view.indicators.filter((i) => i.group === row.id))
           : indicator
-            ? renderRow(indicator)
+            ? renderRow(indicator, row.id, country)
             : null;
     if (!node) continue;
-    // Intertitre avant la première ligne calculée par Glaux.
-    if (row.derived && !sectionShown) {
-      sectionShown = true;
-      const section = el("li", "indicators__section", t().derivedSection);
-      section.setAttribute("data-tooltip", t().derivedHint);
-      nodes.push(section);
+    // Intertitre avant la première ligne de chaque rubrique.
+    if (row.section !== section) {
+      section = row.section;
+      const [title, hint] = sectionTexts(section);
+      const header = el("li", "indicators__section", title);
+      header.setAttribute("data-tooltip", hint);
+      nodes.push(header);
     }
     nodes.push(node);
   }
@@ -272,7 +294,9 @@ function renderList(view: DashboardView): void {
 function render(incoming: DashboardView): void {
   // Choix d'affichage en cours d'enregistrement : on garde celui de l'écran (déjà à jour).
   const view =
-    layoutSaves > 0 && dashboard ? { ...incoming, rows: dashboard.rows, selections: dashboard.selections } : incoming;
+    layoutSaves > 0 && dashboard
+      ? { ...incoming, rows: dashboard.rows, selections: dashboard.selections, countries: dashboard.countries }
+      : incoming;
   dashboard = view;
   for (const [groupId, ids] of Object.entries(view.selections ?? {})) setGroupSelection(groupId, ids);
   // Langue choisie dans Rust (système ou préférence) : textes fixes remis à jour si elle change.
@@ -473,19 +497,26 @@ async function renderDetail(): Promise<void> {
   const group = id ? groupFor(id) : undefined;
   if (id && group) return renderGroupDetail(id, group);
 
-  const indicator = dashboard?.indicators.find((i) => i.id === id);
-  const display = id ? displayFor(id) : undefined;
-  if (!id || !indicator || !display) {
+  // Indicateur par pays : série du pays choisi (« hicp_fr ») ; zone euro sinon.
+  const country = id ? dashboard?.countries?.[id] : undefined;
+  const seriesId = id ? countrySeries(id, country) : undefined;
+  const indicator = dashboard?.indicators.find((i) => i.id === seriesId);
+  const display = seriesId ? displayFor(seriesId) : undefined;
+  if (!id || !seriesId || !indicator || !display) {
     closeDetail();
     return;
   }
+  const byCountry = hasCountries(id);
+  const euro = byCountry && country ? dashboard?.indicators.find((i) => i.id === id) : undefined;
 
-  // Vue d'un seul indicateur : valeur à droite, pas de légende.
-  $("detail-legend")?.setAttribute("hidden", "");
+  // Vue d'un seul indicateur : valeur à droite ; par pays : pastilles et légende pays / zone euro.
+  renderCountrySwitch(byCountry ? id : null);
+  renderCountryLegend(euro ? { indicator, display, country, euro } : null);
   document.querySelector(".detail__right")?.removeAttribute("hidden");
   const set = setText;
+  const date = formatDateLine(indicator, display);
   set("detail-title", display.label);
-  set("detail-date", formatDateLine(indicator, display));
+  set("detail-date", byCountry ? `${countryName(country)} · ${date}` : date);
   set("detail-value", indicator.latest ? formatValue(indicator.latest.value, display) : "—");
   set("detail-change", formatChange(indicator, display));
   set("detail-explain", display.explanation);
@@ -493,14 +524,17 @@ async function renderDetail(): Promise<void> {
 
   const months = detailMonths;
   const request = ++detailRequest;
-  let points: Observation[];
-  try {
-    points = await loadHistory(id, months);
-  } catch (err) {
-    console.error("Historique indisponible :", err);
-    points = [];
-  }
-  if (request !== detailRequest) return; // l'utilisateur a changé d'indicateur ou de période
+  const history = async (seriesToLoad: string): Promise<Observation[]> => {
+    try {
+      return await loadHistory(seriesToLoad, months);
+    } catch (err) {
+      console.error("Historique indisponible :", err);
+      return [];
+    }
+  };
+  // Pays choisi : la zone euro en pointillés, pour comparer.
+  const [points, euroPoints] = await Promise.all([history(seriesId), euro ? history(id) : Promise.resolve([])]);
+  if (request !== detailRequest) return; // l'utilisateur a changé d'indicateur, de pays ou de période
 
   const readout = $("detail-readout");
   const chart = $("detail-chart");
@@ -514,17 +548,104 @@ async function renderDetail(): Promise<void> {
   readout.textContent = range;
 
   const onHover = (date: string | null, hovered: (number | null)[]) => {
-    const value = hovered[0];
-    readout.textContent =
-      date && value !== null && value !== undefined
-        ? t().readout(formatFullPeriod(date, display.monthly), formatValue(value, display))
-        : range;
+    // Pays : la zone euro est dessinée en premier (sous la courbe du pays).
+    const value = hovered[euro ? 1 : 0];
+    if (!date || value === null || value === undefined) {
+      readout.textContent = range;
+      return;
+    }
+    // Pays : « oct. 2025 : 3,4 % · zone euro 2,9 % ».
+    const euroValue = euro ? hovered[0] : null;
+    const text =
+      euro && euroValue !== null && euroValue !== undefined
+        ? t().countryReadout(
+            formatValue(value, display),
+            countryName(undefined).toLowerCase(),
+            formatValue(euroValue, display),
+          )
+        : formatValue(value, display);
+    readout.textContent = t().readout(formatFullPeriod(date, display.monthly), text);
   };
   // La courbe prend toute la place libre du panneau.
   const width = chart.clientWidth || 364;
   const height = Math.max(150, chart.clientHeight || 150);
+  // Pays : zone euro en pointillés discrets, dessinée d'abord pour rester sous le pays.
   const series: ChartSeries[] = [{ points, color: COLORS.or }];
+  if (euro) series.unshift({ points: euroPoints, color: COLORS.cremeDoux, dashed: true });
   chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover));
+}
+
+/**
+ * Pastilles « ZE DE FR IT… » sous le titre d'un indicateur disponible par pays : un clic
+ * affiche ce pays sur la ligne du panneau et dans la vue détail. `row` null : masquées.
+ */
+function renderCountrySwitch(row: string | null): void {
+  const container = $("detail-countries");
+  if (!container) return;
+  if (!row) {
+    container.setAttribute("hidden", "");
+    container.replaceChildren();
+    return;
+  }
+  const chosen = dashboard?.countries?.[row];
+  const focused = (document.activeElement as HTMLElement | null)?.dataset.country;
+  const chips = [undefined, ...COUNTRY_CODES].map((code) => {
+    const chip = el("button", "chip", countryCode(code));
+    chip.type = "button";
+    chip.dataset.country = code ?? "";
+    chip.setAttribute("aria-pressed", String(code === chosen));
+    chip.setAttribute("data-tooltip", countryName(code));
+    return chip;
+  });
+  container.setAttribute("aria-label", t().countriesSwitch);
+  container.replaceChildren(...chips);
+  container.removeAttribute("hidden");
+  // Clavier : la pastille cliquée garde le focus après le nouvel affichage.
+  if (focused !== undefined) chips.find((chip) => chip.dataset.country === focused)?.focus();
+}
+
+/** Légende quand un pays est affiché : le pays (trait or) et la zone euro (pointillés). */
+function renderCountryLegend(
+  shown: { indicator: IndicatorView; display: Display; country?: string; euro: IndicatorView } | null,
+): void {
+  const legend = $("detail-legend");
+  if (!legend) return;
+  if (!shown) {
+    legend.setAttribute("hidden", "");
+    legend.replaceChildren();
+    return;
+  }
+  const { indicator, display, country, euro } = shown;
+  const item = (name: string, view: IndicatorView, color: string, dashed: boolean) => {
+    const node = el("span", dashed ? "legend-item legend-item--dashed" : "legend-item");
+    node.style.setProperty("--serie", color);
+    const value = view.latest ? formatValue(view.latest.value, display) : "—";
+    node.setAttribute("data-tooltip", `${t().memberHint(name, value, formatChange(view, display))}`);
+    node.append(el("span", "", name), el("span", "legend-item__value", value));
+    return node;
+  };
+  legend.replaceChildren(
+    item(countryName(country), indicator, COLORS.or, false),
+    item(countryName(undefined), euro, COLORS.cremeDoux, true),
+  );
+  legend.removeAttribute("hidden");
+}
+
+/** Affiche un pays (ou la zone euro) sur une ligne ; Rust l'enregistre dans prefs.json. */
+function setCountry(row: string, country: string | undefined): void {
+  if (!dashboard || dashboard.countries?.[row] === country) return;
+  const countries = { ...(dashboard.countries ?? {}) };
+  if (country) countries[row] = country;
+  else delete countries[row];
+  dashboard = { ...dashboard, countries };
+  renderList(dashboard);
+  if (detailId === row) void renderDetail();
+  layoutSaves += 1;
+  invoke("set_country", { id: row, country: country ?? null })
+    .catch((err) => console.error("Choix du pays non enregistré :", err))
+    .finally(() => {
+      layoutSaves -= 1;
+    });
 }
 
 /** Historiques des membres d'un groupe, chacun dans sa couleur. */
@@ -552,6 +673,7 @@ async function renderGroupDetail(id: string, group: GroupDisplay): Promise<void>
   }
   const display = first.display;
 
+  renderCountrySwitch(null);
   setText("detail-title", group.label);
   const unit = shortUnit(display);
   setText("detail-date", `${t().monthlyAverages} · ${t().groupSub(unit, formatDateLine(first.indicator, display))}`);
@@ -627,6 +749,7 @@ async function renderCurveDetail(): Promise<void> {
   const display = curveDisplay();
 
   // À droite : la pente 2-10 ans, la lecture la plus utile d'une courbe.
+  renderCountrySwitch(null);
   setText("detail-title", display.label);
   setText("detail-date", t().curveSub(formatDateLine(ten, display)));
   document.querySelector(".detail__right")?.removeAttribute("hidden");
@@ -701,11 +824,21 @@ async function buildImage(id: string): Promise<Uint8Array> {
     const series = await loadGroupSeries(group, detailMonths);
     return renderGroupExportImage(group, members, series, detailMonths, exportFormat);
   }
-  const indicator = dashboard?.indicators.find((i) => i.id === id);
-  const display = displayFor(id);
+  const country = dashboard?.countries?.[id];
+  const seriesId = countrySeries(id, country);
+  const indicator = dashboard?.indicators.find((i) => i.id === seriesId);
+  const display = displayFor(seriesId);
   if (!indicator || !display) throw new Error("indicateur inconnu");
-  const points = await loadHistory(id, detailMonths);
-  return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat);
+  const points = await loadHistory(seriesId, detailMonths);
+  if (seriesId === id) {
+    return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat);
+  }
+  // Pays : son nom dans le titre, la zone euro en pointillés pour comparer.
+  const euroPoints = await loadHistory(id, detailMonths);
+  return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat, {
+    title: `${display.label} · ${countryName(country)}`,
+    reference: euroPoints,
+  });
 }
 
 /**
@@ -723,7 +856,8 @@ async function exportCurrent(action: "save" | "copy"): Promise<void> {
   try {
     const png = await buildImage(id);
     if (action === "save") {
-      const path = await savePng(png, id, exportFormat);
+      // Nom du fichier : la série affichée (« hicp_fr » pour la France).
+      const path = await savePng(png, countrySeries(id, dashboard?.countries?.[id]), exportFormat);
       button.setAttribute("data-tooltip", path);
     } else {
       await copyPng(png);
@@ -787,19 +921,16 @@ function closeCustomize(): void {
   }
 }
 
-/** Deux sections, comme dans la liste : séries de la BCE, puis calculés par Glaux. */
+/** Trois rubriques, comme dans la liste : zone euro, zone euro ou par pays, calculés par Glaux. */
 function renderCustomize(): void {
   const container = $("customize-sections");
   if (!container || !dashboard || drag) return; // jamais pendant un glisser
-  const strings = t();
   const rows = dashboard.rows;
   const lastVisible = rows.filter((row) => !row.hidden).length <= 1;
-  const sections: [boolean, string][] = [
-    [false, strings.ecbSection],
-    [true, strings.derivedSection],
-  ];
-  const nodes = sections.flatMap(([derived, title]) => {
-    const items = rows.filter((row) => row.derived === derived);
+  const sections: Section[] = ["euro", "country", "derived"];
+  const nodes = sections.flatMap((section) => {
+    const [title] = sectionTexts(section);
+    const items = rows.filter((row) => row.section === section);
     if (items.length === 0) return [];
     const list = el("ul", "customize__list");
     list.append(...items.map((row) => renderCustomItem(row, lastVisible)));
@@ -932,7 +1063,7 @@ function moveRow(id: string, step: -1 | 1): void {
   const rows = [...dashboard.rows];
   const from = rows.findIndex((row) => row.id === id);
   const to = from + step;
-  if (from < 0 || to < 0 || to >= rows.length || rows[to].derived !== rows[from].derived) return;
+  if (from < 0 || to < 0 || to >= rows.length || rows[to].section !== rows[from].section) return;
   [rows[from], rows[to]] = [rows[to], rows[from]];
   saveLayout(rows);
 }
@@ -1295,6 +1426,12 @@ function setupButtons(): void {
       detailMonths = Number(button.dataset.months) || 60;
       void renderDetail();
     });
+  });
+
+  // Pastilles de pays (inflation, chômage) : zone euro ou un pays.
+  $("detail-countries")?.addEventListener("click", (event) => {
+    const chip = (event.target as Element | null)?.closest<HTMLElement>(".chip");
+    if (chip && detailId) setCountry(detailId, chip.dataset.country || undefined);
   });
 }
 
