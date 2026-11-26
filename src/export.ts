@@ -260,12 +260,18 @@ function drawChartBlock(
 
 /** Explication puis pied de page : source et marque. */
 function drawFooter(ctx: CanvasRenderingContext2D, layout: Layout, explanation: string): void {
-  const { margin, width, footer, explanation: block } = layout;
+  const { explanation: block } = layout;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.creme;
   ctx.font = `${block.size}px ${SANS}`;
   drawBlock(ctx, explanation, block);
+  drawSourceLine(ctx, layout);
+}
 
+/** Bas de page : filet, source (BCE) à gauche, marque à droite. */
+function drawSourceLine(ctx: CanvasRenderingContext2D, layout: Layout): void {
+  const { margin, width, footer } = layout;
+  ctx.textAlign = "left";
   ctx.fillStyle = COLORS.ligne;
   ctx.fillRect(margin, footer.rule, width - 2 * margin, 2);
   ctx.fillStyle = COLORS.cremeDoux;
@@ -277,9 +283,16 @@ function drawFooter(ctx: CanvasRenderingContext2D, layout: Layout, explanation: 
   ctx.fillText("Glaux", width - margin, footer.y);
 }
 
-async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("conversion en PNG impossible");
+/**
+ * Encodage de l'image : PNG (image seule, net et sans perte) ou JPEG (pages du carrousel :
+ * 3 à 5 fois plus léger, et le seul format qu'un PDF peut contenir tel quel).
+ */
+export type Encoding = "png" | "jpeg";
+
+async function encode(canvas: HTMLCanvasElement, encoding: Encoding): Promise<Uint8Array> {
+  const type = encoding === "jpeg" ? "image/jpeg" : "image/png";
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.92));
+  if (!blob) throw new Error(`conversion en ${encoding.toUpperCase()} impossible`);
   return new Uint8Array(await blob.arrayBuffer());
 }
 
@@ -311,6 +324,7 @@ export async function renderExportImage(
   format: ExportFormat,
   /** Indicateur d'un pays : titre avec le pays, zone euro en pointillés. */
   country?: { title: string; reference: Observation[] },
+  encoding: Encoding = "png",
 ): Promise<Uint8Array> {
   const layout = LAYOUTS[format];
   const { canvas, ctx } = newCanvas(layout);
@@ -338,7 +352,7 @@ export async function renderExportImage(
   if (country) series.unshift({ points: country.reference, color: COLORS.cremeDoux, dashed: true });
   drawChartBlock(ctx, layout, series, display, months, country ? t().euroDashed : undefined);
   drawFooter(ctx, layout, display.explanation);
-  return toPng(canvas);
+  return encode(canvas, encoding);
 }
 
 /** Un membre de groupe prêt à dessiner : sa couleur, ses données, sa présentation. */
@@ -449,6 +463,7 @@ export async function renderGroupExportImage(
   series: ChartSeries[],
   months: number,
   format: ExportFormat,
+  encoding: Encoding = "png",
 ): Promise<Uint8Array> {
   const layout = LAYOUTS[format];
   const { canvas, ctx } = newCanvas(layout);
@@ -471,7 +486,7 @@ export async function renderGroupExportImage(
   const display = (dated ?? members[0])?.display;
   if (display) drawChartBlock(ctx, layout, series, display, months);
   drawFooter(ctx, layout, group.explanation);
-  return toPng(canvas);
+  return encode(canvas, encoding);
 }
 
 /**
@@ -524,6 +539,7 @@ export async function renderCurveExportImage(
   slope: IndicatorView | null,
   months: number,
   format: ExportFormat,
+  encoding: Encoding = "png",
 ): Promise<Uint8Array> {
   const layout = LAYOUTS[format];
   const display = curveDisplay();
@@ -560,7 +576,139 @@ export async function renderCurveExportImage(
     labels,
   );
   drawFooter(ctx, layout, display.explanation);
-  return toPng(canvas);
+  return encode(canvas, encoding);
+}
+
+// ---------- Carrousel LinkedIn (PDF) ----------
+// Couverture, une page par indicateur affiché (images portrait 4:5), page des sources.
+// Les pages sont dessinées ici en JPEG ; Rust les assemble en PDF (src-tauri/src/pdf.rs).
+
+/** Un chiffre clé de la couverture : nom, valeur, date de la donnée. */
+export type CoverFigure = { label: string; value: string; date: string };
+
+/** Couverture : « La zone euro en chiffres », mois, 4 chiffres clés, invitation à faire défiler. */
+export async function renderCarouselCover(figures: CoverFigure[]): Promise<Uint8Array> {
+  const layout = LAYOUTS.portrait;
+  const { canvas, ctx } = newCanvas(layout);
+  const { margin, width } = layout;
+  const strings = t();
+  drawHeader(ctx, layout);
+
+  const month = new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(new Date());
+  ctx.textAlign = "left";
+  ctx.fillStyle = COLORS.or;
+  ctx.font = `600 30px ${SANS}`;
+  ctx.fillText(strings.coverKicker(month).toUpperCase(), margin, 290);
+  ctx.fillStyle = COLORS.creme;
+  ctx.font = `600 100px ${SERIF}`;
+  strings.coverTitle.forEach((line, i) => ctx.fillText(line, margin - 4, 410 + i * 112));
+  ctx.fillStyle = COLORS.cremeDoux;
+  ctx.font = `32px ${SANS}`;
+  drawBlock(ctx, strings.coverSubtitle, { x: margin, y: 610, size: 32, maxWidth: width - 2 * margin, lineHeight: 44, lines: 2 });
+
+  // Chiffres clés : 2 colonnes × 2 lignes, dans des cadres.
+  const gap = 40;
+  const cardWidth = (width - 2 * margin - gap) / 2;
+  const cardHeight = 220;
+  figures.slice(0, 4).forEach((figure, k) => {
+    const x = margin + (k % 2) * (cardWidth + gap);
+    const y = 700 + Math.floor(k / 2) * (cardHeight + gap);
+    ctx.fillStyle = "#14233a";
+    ctx.strokeStyle = COLORS.ligne;
+    ctx.lineWidth = 2;
+    roundedRect(ctx, x, y, cardWidth, cardHeight, 18);
+    ctx.fill();
+    ctx.stroke();
+    const inner = x + 32;
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLORS.cremeDoux;
+    ctx.font = `28px ${SANS}`;
+    ctx.fillText(fitText(ctx, figure.label, cardWidth - 64), inner, y + 56);
+    ctx.fillStyle = COLORS.or;
+    ctx.font = `700 84px ${SANS}`;
+    ctx.fillText(figure.value, inner - 3, y + 148);
+    ctx.fillStyle = COLORS.creme;
+    ctx.font = `26px ${SANS}`;
+    ctx.fillText(fitText(ctx, figure.date, cardWidth - 64), inner, y + 192);
+  });
+
+  ctx.textAlign = "right";
+  ctx.fillStyle = COLORS.or;
+  ctx.font = `600 30px ${SANS}`;
+  ctx.fillText(strings.swipe, width - margin, 1222);
+  drawSourceLine(ctx, layout);
+  return encode(canvas, "jpeg");
+}
+
+/** Dernière page : sources et méthode, avertissement, puis la marque Glaux. */
+export async function renderCarouselEnd(paragraphs: string[]): Promise<Uint8Array> {
+  const layout = LAYOUTS.portrait;
+  const { canvas, ctx } = newCanvas(layout);
+  const { margin, width } = layout;
+  const strings = t();
+  drawHeader(ctx, layout);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = COLORS.creme;
+  ctx.font = `600 72px ${SERIF}`;
+  ctx.fillText(strings.endTitle, margin, 290);
+
+  // Paragraphes l'un sous l'autre, chacun sur autant de lignes que nécessaire.
+  let y = 380;
+  ctx.font = `30px ${SANS}`;
+  for (const paragraph of paragraphs) {
+    const lines = wrap(ctx, paragraph, width - 2 * margin, 4);
+    ctx.fillStyle = COLORS.creme;
+    lines.forEach((line, i) => ctx.fillText(line, margin, y + i * 42));
+    y += lines.length * 42 + 30;
+  }
+
+  // La marque, centrée, au-dessus du pied de page.
+  ctx.textAlign = "center";
+  ctx.fillStyle = COLORS.or;
+  ctx.font = `600 110px ${SERIF}`;
+  ctx.fillText("Glaux", width / 2, 1070);
+  ctx.fillStyle = COLORS.creme;
+  ctx.font = `34px ${SANS}`;
+  ctx.fillText(strings.endTagline, width / 2, 1130);
+  ctx.fillStyle = COLORS.cremeDoux;
+  ctx.font = `28px ${SANS}`;
+  ctx.fillText(strings.endLink, width / 2, 1180);
+  drawSourceLine(ctx, layout);
+  return encode(canvas, "jpeg");
+}
+
+/** Rectangle aux coins arrondis (tracé seulement ; `roundRect` manque aux anciens macOS). */
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** Texte raccourci avec « … » s'il dépasse `maxWidth` (police déjà choisie). */
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let cut = text;
+  while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxWidth) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
+/** Enregistre le carrousel (PDF assemblé par Rust, Images › Glaux). Renvoie le chemin du fichier. */
+export function saveCarousel(pages: Uint8Array[]): Promise<string> {
+  const total = pages.reduce((sum, page) => sum + page.length, 0);
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const page of pages) {
+    body.set(page, offset);
+    offset += page.length;
+  }
+  return invoke<string>("save_carousel", body, {
+    headers: { "x-pages": pages.map((page) => page.length).join(",") },
+  });
 }
 
 /** Enregistre l'image (Images › Glaux) ; `id` : indicateur ou groupe. Renvoie le chemin du fichier. */

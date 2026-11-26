@@ -14,10 +14,15 @@ import {
   EXPORT_FORMATS,
   copyPng,
   formatSize,
+  renderCarouselCover,
+  renderCarouselEnd,
   renderCurveExportImage,
   renderExportImage,
   renderGroupExportImage,
+  saveCarousel,
   savePng,
+  type CoverFigure,
+  type Encoding,
   type ExportFormat,
 } from "./export";
 import {
@@ -75,7 +80,9 @@ let customizeOpen = false;
 /** Enregistrements de l'affichage en cours : les lignes reçues entre-temps sont ignorées. */
 let layoutSaves = 0;
 /** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
-let exportFormat: ExportFormat = loadExportFormat();
+/** Choix du menu d'export : un format d'image, ou le carrousel LinkedIn (PDF de plusieurs pages). */
+type ExportChoice = ExportFormat | "carousel";
+let exportFormat: ExportChoice = loadExportFormat();
 /**
  * Panneau agrandi : liste à gauche, vue détail (ou « Indicateurs affichés ») à droite,
  * en grand. Retenu d'une fois sur l'autre.
@@ -98,16 +105,17 @@ function saveLarge(): void {
   }
 }
 
-function loadExportFormat(): ExportFormat {
+function loadExportFormat(): ExportChoice {
   try {
     const saved = localStorage.getItem("glaux.exportFormat");
+    if (saved === "carousel") return "carousel";
     return EXPORT_FORMATS.find((f) => f === saved) ?? "portrait";
   } catch {
     return "portrait";
   }
 }
 
-function saveExportFormat(format: ExportFormat): void {
+function saveExportFormat(format: ExportChoice): void {
   exportFormat = format;
   try {
     localStorage.setItem("glaux.exportFormat", format);
@@ -812,17 +820,21 @@ async function renderCurveDetail(): Promise<void> {
   chart.replaceChildren(renderDetailChart(series, display, months, width, height, onHover, labels));
 }
 
-/** Image de la vue détail ouverte, au format choisi. */
-async function buildImage(id: string): Promise<Uint8Array> {
+/**
+ * Image d'un indicateur (ou groupe, ou courbe), telle que la vue détail l'afficherait :
+ * pays choisi, pays des groupes, période (1 ou 5 ans). PNG pour l'image seule, JPEG pour
+ * une page du carrousel.
+ */
+async function buildImage(id: string, format: ExportFormat, encoding: Encoding = "png"): Promise<Uint8Array> {
   if (id === CURVE_ID) {
     const curve = await loadCurve(detailMonths);
-    return renderCurveExportImage(curve, curveSlope(dashboard?.indicators ?? []), detailMonths, exportFormat);
+    return renderCurveExportImage(curve, curveSlope(dashboard?.indicators ?? []), detailMonths, format, encoding);
   }
   const group = groupFor(id);
   if (group) {
     const members = groupMembers(group, dashboard?.indicators ?? []);
     const series = await loadGroupSeries(group, detailMonths);
-    return renderGroupExportImage(group, members, series, detailMonths, exportFormat);
+    return renderGroupExportImage(group, members, series, detailMonths, format, encoding);
   }
   const country = dashboard?.countries?.[id];
   const seriesId = countrySeries(id, country);
@@ -831,14 +843,66 @@ async function buildImage(id: string): Promise<Uint8Array> {
   if (!indicator || !display) throw new Error("indicateur inconnu");
   const points = await loadHistory(seriesId, detailMonths);
   if (seriesId === id) {
-    return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat);
+    return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, format, undefined, encoding);
   }
   // Pays : son nom dans le titre, la zone euro en pointillés pour comparer.
   const euroPoints = await loadHistory(id, detailMonths);
-  return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, exportFormat, {
-    title: `${display.label} · ${countryName(country)}`,
-    reference: euroPoints,
+  const reference = { title: `${display.label} · ${countryName(country)}`, reference: euroPoints };
+  return renderExportImage(indicator, display, points, detailMonths, dashboard?.agenda, format, reference, encoding);
+}
+
+// ---------- Carrousel LinkedIn ----------
+
+/** Chiffres clés de la couverture : toujours la zone euro (taux, inflation, chômage, 10 ans). */
+function coverFigures(): CoverFigure[] {
+  return ["deposit_rate", "hicp", "unemployment", "yield_10y"].flatMap((id) => {
+    const indicator = dashboard?.indicators.find((i) => i.id === id);
+    const display = displayFor(id);
+    if (!indicator?.latest || !display) return [];
+    return [
+      {
+        label: display.label,
+        value: formatValue(indicator.latest.value, display),
+        date: formatDateLine(indicator, display),
+      },
+    ];
   });
+}
+
+/** Paragraphes de la dernière page : source et date du téléchargement, méthode, avertissement. */
+function endParagraphs(): string[] {
+  const strings = t();
+  const updated = dashboard?.updatedAt;
+  const downloaded = updated
+    ? new Intl.DateTimeFormat(locale(), { dateStyle: "long", timeStyle: "short" }).format(new Date(updated))
+    : "—";
+  return [strings.endSources(downloaded), strings.endComputed, strings.endMonthly, strings.endDisclaimer];
+}
+
+/** Nombre de pages du carrousel : couverture, indicateurs affichés, sources. */
+function carouselPageCount(): number {
+  return visibleRowIds().length + 2;
+}
+
+/**
+ * Carrousel LinkedIn : couverture, une page portrait par indicateur affiché (dans l'ordre du
+ * panneau, avec le pays et la période choisis), page des sources ; PDF dans Images › Glaux.
+ */
+async function exportCarousel(button: HTMLElement): Promise<string> {
+  const ids = visibleRowIds();
+  const total = ids.length + 2;
+  const progress = (page: number) => {
+    button.textContent = t().carouselProgress(page, total);
+  };
+  progress(1);
+  const pages = [await renderCarouselCover(coverFigures())];
+  for (const [k, id] of ids.entries()) {
+    progress(k + 2);
+    pages.push(await buildImage(id, "portrait", "jpeg"));
+  }
+  progress(total);
+  pages.push(await renderCarouselEnd(endParagraphs()));
+  return saveCarousel(pages);
 }
 
 /**
@@ -851,10 +915,22 @@ async function exportCurrent(action: "save" | "copy"): Promise<void> {
   if (!button || !id || button.dataset.busy) return;
 
   const strings = t();
+  const carousel = exportFormat === "carousel";
+  if (carousel && action === "copy") return; // un PDF ne se colle pas dans un post
   button.dataset.busy = "1";
   button.textContent = action === "save" ? strings.exporting : strings.copying;
   try {
-    const png = await buildImage(id);
+    if (exportFormat === "carousel") {
+      const path = await exportCarousel(button);
+      button.setAttribute("data-tooltip", path);
+      button.textContent = strings.carouselDone;
+      window.setTimeout(() => {
+        delete button.dataset.busy;
+        applyExportButtons();
+      }, 2500);
+      return;
+    }
+    const png = await buildImage(id, exportFormat);
     if (action === "save") {
       // Nom du fichier : la série affichée (« hicp_fr » pour la France).
       const path = await savePng(png, countrySeries(id, dashboard?.countries?.[id]), exportFormat);
@@ -1329,15 +1405,22 @@ function applyExportButtons(): void {
     copy.textContent = strings.copyImage;
     copy.setAttribute("data-tooltip", strings.copyHint(keys("C")));
   }
+  // Carrousel : un PDF à joindre au post (« Ajouter un document »), pas d'image à copier.
+  if (copy) copy.hidden = exportFormat === "carousel";
   const select = $("export-format") as HTMLSelectElement | null;
   if (select) {
     for (const option of Array.from(select.options)) {
-      const format = option.value as ExportFormat;
+      const format = option.value as ExportChoice;
       option.textContent = strings.formatNames[format];
     }
     select.value = exportFormat;
     select.setAttribute("aria-label", strings.formatAria);
-    select.setAttribute("data-tooltip", strings.formatHint(formatSize(exportFormat), strings.formatPlatforms[exportFormat]));
+    select.setAttribute(
+      "data-tooltip",
+      exportFormat === "carousel"
+        ? strings.carouselHint(carouselPageCount())
+        : strings.formatHint(formatSize(exportFormat), strings.formatPlatforms[exportFormat]),
+    );
   }
 }
 
@@ -1416,7 +1499,7 @@ function setupButtons(): void {
   $("copy")?.addEventListener("click", () => void exportCurrent("copy"));
   $("export-format")?.addEventListener("change", (event) => {
     const value = (event.target as HTMLSelectElement).value;
-    const format = EXPORT_FORMATS.find((f) => f === value);
+    const format = value === "carousel" ? "carousel" : EXPORT_FORMATS.find((f) => f === value);
     if (format) saveExportFormat(format);
     applyExportButtons();
   });

@@ -70,6 +70,19 @@ Vue détail : choix du format (retenu d'une fois sur l'autre), « Copier » (⌘
 - Enregistrement : `Images/Glaux/Glaux_{indicateur}_{format}_{date}.png` (nom construit côté Rust à partir de
   valeurs connues). Copie : module presse-papiers de Tauri (`copy_png` dans `main.rs`).
 
+## Carrousel LinkedIn (PDF)
+
+Menu des formats › « Carrousel PDF », puis « Enregistrer » (⌘E) : un PDF prêt à joindre à un post LinkedIn
+(« Ajouter un document » : chaque page devient une diapositive).
+- Pages 4:5 (1080 × 1350) : couverture « La zone euro en chiffres » (mois, 4 chiffres clés de la zone euro :
+  taux de dépôt, inflation, chômage, taux 10 ans), une page par indicateur affiché dans le panneau (dans son
+  ordre, avec le pays, les pays des groupes et la période choisis), page « Sources et méthode » (date du
+  téléchargement, calculs de Glaux, avertissement « pas un conseil en investissement »).
+- L'interface dessine les pages en JPEG (`renderCarouselCover`, `buildImage`, `renderCarouselEnd`) ; Rust les
+  assemble en PDF sans bibliothèque (`src-tauri/src/pdf.rs` : une image par page, 810 × 1012,5 points) et
+  l'enregistre dans `Images/Glaux/Glaux_carrousel_{date}.pdf` (commande `save_carousel`). Pas de « Copier ».
+- Environ 2 Mo pour 13 pages (LinkedIn accepte jusqu'à 300 pages et 100 Mo).
+
 ## Export Excel
 
 Icône « tableau » dans l'en-tête (à côté de ↻) : toutes les séries dans `Documents/Glaux/Glaux_donnees_{date}.xlsx`,
@@ -175,7 +188,8 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src-tauri/src/macos_notify.rs` | Notifications Mac (UNUserNotificationCenter, repli osascript en mode dev) |
 | `src-tauri/src/alerts.rs` | Textes des notifications : changement de taux BCE, nouvelle inflation |
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
-| `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, courbe des taux, sources) |
+| `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, par pays, courbe des taux, sources) |
+| `src-tauri/src/pdf.rs` | Carrousel LinkedIn : PDF minimal, une image JPEG par page |
 | `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification quotidienne, installation au clic |
 | `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation), indicateurs calculés à la demande, préférences (dont lignes affichées et leur ordre) |
 | `src-tauri/tauri.conf.json` | Fenêtre, identifiant de l'app, icônes, sécurité, mises à jour |
@@ -190,7 +204,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src/main.ts` | Interface : liste, vue détail, indicateurs affichés (glisser, interrupteurs), hauteur du panneau, boutons, raccourcis |
 | `src/chart.ts` | Courbes sans bibliothèque : mini-courbes, courbe de la vue détail, courbe de l'image |
 | `src/curve.ts` | Courbe des taux : écart 10 ans − 2 ans, courbes à comparer, échéances de l'axe |
-| `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée |
+| `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée ; pages du carrousel (couverture, sources) |
 | `src/agenda.ts` | Bandeau d'agenda : compte à rebours (les dates viennent de Rust) |
 | `src/indicators.ts` | Nom, précision et textes d'explication de chaque indicateur (FR / EN) |
 | `src/i18n.ts` | Tous les textes de l'interface, en français et en anglais |
@@ -206,4 +220,6 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 6. Agenda : prochaine décision BCE, prochaine inflation
 7. Notifications
 8. FR/EN, mises à jour automatiques, Windows, version publiée (v0.1.0)
-9. V2 : écarts de taux par pays, formats d'image + copier, export Excel, choix et ordre des indicateurs ← **ici** (v0.2.0)
+9. V2 : écarts de taux par pays, formats d'image + copier, export Excel, choix et ordre des indicateurs (v0.2.0)
+10. V3 : plus de données BCE, courbe des taux AAA, panneau agrandi, rubriques et indicateurs par pays (v0.3.0),
+    carrousel LinkedIn ← **ici** ; ensuite : fiabilité (DMG universel, calendrier automatique)

@@ -142,9 +142,27 @@ const fr = {
   copied: "Copiée",
   copyFailed: "Échec",
   formatAria: "Format de l'image",
-  formatNames: { portrait: "Portrait 4:5", landscape: "Paysage 16:9", story: "Story 9:16" },
+  formatNames: { portrait: "Portrait 4:5", landscape: "Paysage 16:9", story: "Story 9:16", carousel: "Carrousel PDF" },
   formatHint: (size: string, platforms: string) => `Format de l'image : ${size} px, pour ${platforms}`,
   formatPlatforms: { portrait: "LinkedIn et Instagram", landscape: "LinkedIn et X", story: "TikTok, Reels et stories" },
+  // Carrousel LinkedIn : un PDF (couverture, indicateurs affichés, sources).
+  carouselHint: (pages: number) =>
+    `Carrousel LinkedIn : un PDF de ${pages} pages 4:5 (couverture, indicateurs affichés dans l'ordre du panneau, sources), dans Images › Glaux`,
+  carouselProgress: (page: number, total: number) => `Page ${page}/${total}…`,
+  carouselDone: "PDF enregistré",
+  coverKicker: (month: string) => `Point macro · ${month}`,
+  coverTitle: ["La zone euro", "en chiffres"],
+  coverSubtitle: "Les derniers chiffres de la Banque centrale européenne.",
+  swipe: "Faites défiler →",
+  endTitle: "Sources et méthode",
+  endSources: (downloaded: string) =>
+    `Données : Banque centrale européenne, API publique (data.ecb.europa.eu), téléchargées le ${downloaded}.`,
+  endComputed:
+    "Calculés par Glaux : taux directeur réel = taux de dépôt − inflation ; pente 2-10 ans = taux AAA à 10 ans − taux AAA à 2 ans ; écarts = taux à 10 ans du pays − taux allemand.",
+  endMonthly: "Par pays : chiffres mensuels ; taux à 10 ans en moyenne du mois (statistiques de convergence).",
+  endDisclaimer: "Ces chiffres informent ; ils ne constituent pas un conseil en investissement.",
+  endTagline: "Tableau de bord macro de la zone euro",
+  endLink: "Mac et Windows · github.com/hugogodart41-droid/glaux",
 
   // Alertes
   alertsOn: "Alertes : oui",
@@ -270,9 +288,26 @@ const en: Strings = {
   copied: "Copied",
   copyFailed: "Failed",
   formatAria: "Image format",
-  formatNames: { portrait: "Portrait 4:5", landscape: "Landscape 16:9", story: "Story 9:16" },
+  formatNames: { portrait: "Portrait 4:5", landscape: "Landscape 16:9", story: "Story 9:16", carousel: "PDF carousel" },
   formatHint: (size, platforms) => `Image format: ${size} px, for ${platforms}`,
   formatPlatforms: { portrait: "LinkedIn and Instagram", landscape: "LinkedIn and X", story: "TikTok, Reels and stories" },
+  carouselHint: (pages) =>
+    `LinkedIn carousel: a ${pages}-page 4:5 PDF (cover, indicators shown in panel order, sources), in Pictures › Glaux`,
+  carouselProgress: (page, total) => `Page ${page}/${total}…`,
+  carouselDone: "PDF saved",
+  coverKicker: (month) => `Macro update · ${month}`,
+  coverTitle: ["The euro area", "in numbers"],
+  coverSubtitle: "The latest figures from the European Central Bank.",
+  swipe: "Swipe →",
+  endTitle: "Sources and method",
+  endSources: (downloaded) =>
+    `Data: European Central Bank, public API (data.ecb.europa.eu), downloaded on ${downloaded}.`,
+  endComputed:
+    "Computed by Glaux: real policy rate = deposit rate − inflation; 2-10Y slope = AAA 10-year yield − AAA 2-year yield; spreads = country 10-year yield − German yield.",
+  endMonthly: "By country: monthly figures; 10-year yields as monthly averages (convergence statistics).",
+  endDisclaimer: "These figures are for information only; they are not investment advice.",
+  endTagline: "Euro area macro dashboard",
+  endLink: "Mac and Windows · github.com/hugogodart41-droid/glaux",
 
   alertsOn: "Alerts: on",
   alertsOff: "Alerts: off",

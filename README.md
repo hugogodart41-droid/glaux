@@ -16,6 +16,7 @@ Data comes straight from the European Central Bank's official API. No account, n
 - 10-year spreads against Germany for up to three countries of your choice (France, Italy, Spain, Greece, Portugal, Belgium, Netherlands), on one row and one chart
 - Detail view: 1-year or 5-year chart, low and high, a two-line explanation
 - Image export in three formats: portrait 1080 × 1350 (LinkedIn, Instagram), landscape 1200 × 675 (LinkedIn, X) and story 1080 × 1920 (TikTok, Reels), saved as PNG or copied to paste straight into a post
+- LinkedIn carousel: one PDF with a cover, one page per indicator shown and a sources page
 - Excel export of all historical series (daily, monthly, by country and yield curve sheets, sources), in one click
 - Choose which indicators to show and drag them into your own order; the panel shrinks to fit
 - Enlarge the panel to see the list and a large chart side by side; drag it by its header to move it

@@ -14,6 +14,7 @@ mod excel;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod macos_notify;
+mod pdf;
 mod store;
 mod updates;
 
@@ -359,6 +360,59 @@ fn save_png(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, 
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Enregistre le carrousel LinkedIn (PDF, une page par image) dans Images/Glaux, puis le
+/// montre dans le Finder (ou l'Explorateur). Renvoie le chemin du fichier.
+///
+/// Corps : les pages JPEG mises bout à bout ; en-tête « x-pages » : leurs tailles en octets
+/// (« 152034,148790,… »), pour les séparer.
+#[tauri::command]
+fn save_carousel(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("pages manquantes".into());
+    };
+    let lengths = header(&request, "x-pages")
+        .split(',')
+        .map(|n| {
+            n.trim()
+                .parse::<usize>()
+                .map_err(|_| "tailles des pages illisibles")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if lengths.iter().sum::<usize>() != bytes.len() {
+        return Err("pages incomplètes".into());
+    }
+    let mut pages = Vec::with_capacity(lengths.len());
+    let mut start = 0;
+    for length in lengths {
+        pages.push(&bytes[start..start + length]);
+        start += length;
+    }
+
+    let lang = app.state::<Store>().lang();
+    let pdf = pdf::build(
+        &pages,
+        lang.pick(
+            "Glaux — la zone euro en chiffres",
+            "Glaux — the euro area in numbers",
+        ),
+        "Glaux",
+    )?;
+
+    let dir = app
+        .path()
+        .picture_dir()
+        .map_err(|e| format!("dossier Images introuvable : {e}"))?
+        .join("Glaux");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("création du dossier impossible : {e}"))?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S");
+    let name = lang.pick("carrousel", "carousel");
+    let path: PathBuf = dir.join(format!("Glaux_{name}_{stamp}.pdf"));
+    std::fs::write(&path, pdf).map_err(|e| format!("enregistrement impossible : {e}"))?;
+
+    reveal_in_file_manager(&path);
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Exporte toutes les séries dans un fichier Excel (Documents/Glaux), puis le montre dans le
 /// Finder (ou l'Explorateur). Construit à partir du cache, sans réseau. Renvoie le chemin.
 #[tauri::command]
@@ -641,6 +695,7 @@ fn main() {
             get_history,
             refresh_now,
             save_png,
+            save_carousel,
             copy_png,
             export_excel,
             set_notifications,
