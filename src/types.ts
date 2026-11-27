@@ -62,3 +62,24 @@ export type DashboardView = {
   /** Échec de la dernière tentative de mise à jour. */
   updateError: string | null;
 };
+
+/** Note macro mensuelle (src-tauri/src/note.rs). */
+export type NoteFigure = { label: string; value: string; date: string; change: string | null };
+
+export type NoteSection = {
+  id: "prices" | "rates" | "activity" | "markets";
+  title: string;
+  figures: NoteFigure[];
+  sentences: string[];
+};
+
+export type NoteView = {
+  /** « 2026-12 » : clé de l'analyse enregistrée. */
+  month: string;
+  title: string;
+  cover: NoteFigure[];
+  sections: NoteSection[];
+  analysis: string;
+  post: string;
+  postLimit: number;
+};

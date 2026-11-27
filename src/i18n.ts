@@ -164,6 +164,31 @@ const fr = {
   endTagline: "Tableau de bord macro de la zone euro",
   endLink: "Mac et Windows · github.com/hugogodart41-droid/glaux",
 
+  // Note macro mensuelle
+  noteAria: "Note macro du mois",
+  noteHint: (keys: string) => `Note macro du mois : faits chiffrés, ton analyse, post LinkedIn et PDF (${keys})`,
+  noteTitle: "Note macro",
+  noteHelp: "Phrases tirées des données de la BCE et des calculs de Glaux. Ton analyse ouvre le post et le PDF.",
+  noteAnalysisLabel: "Mon analyse",
+  notePlaceholder: "Ce que je retiens du mois, en quelques phrases…",
+  noteCount: (n: number, limit: number) => `Post : ${n} / ${limit} caractères`,
+  noteTooLong: (n: number, limit: number) => `Post : ${n} / ${limit} caractères, trop long pour LinkedIn`,
+  noteEmpty: "Pas encore de données : actualiser (↻), puis rouvrir la note.",
+  noteCopy: "Copier le texte",
+  noteCopyHint: "Copier le texte du post (titre, analyse, chiffres, sources), à coller dans LinkedIn",
+  noteCopied: "Texte copié",
+  noteFailed: "Échec",
+  noteSave: "Enregistrer le PDF",
+  noteSaveHint: (keys: string) =>
+    `Note en PDF 4:5 (couverture, analyse, 4 rubriques, sources), dans Images › Glaux (${keys})`,
+  noteSaved: "PDF enregistré",
+  noteCoverTitle: ["Zone euro :", "le point du mois"],
+  noteCoverSubtitle: (withAnalysis: boolean): string =>
+    withAnalysis
+      ? "Les chiffres officiels de la BCE, les faits du mois et mon analyse."
+      : "Les chiffres officiels de la BCE et les faits du mois.",
+  noteContinued: (title: string) => `${title} (suite)`,
+
   // Alertes
   alertsOn: "Alertes : oui",
   alertsOff: "Alertes : non",
@@ -308,6 +333,29 @@ const en: Strings = {
   endDisclaimer: "These figures are for information only; they are not investment advice.",
   endTagline: "Euro area macro dashboard",
   endLink: "Mac and Windows · github.com/hugogodart41-droid/glaux",
+
+  noteAria: "Monthly macro note",
+  noteHint: (keys) => `Monthly macro note: key facts, your analysis, LinkedIn post and PDF (${keys})`,
+  noteTitle: "Macro note",
+  noteHelp: "Sentences built from ECB data and Glaux calculations. Your analysis opens the post and the PDF.",
+  noteAnalysisLabel: "My analysis",
+  notePlaceholder: "What I take away from this month, in a few sentences…",
+  noteCount: (n, limit) => `Post: ${n} / ${limit} characters`,
+  noteTooLong: (n, limit) => `Post: ${n} / ${limit} characters, too long for LinkedIn`,
+  noteEmpty: "No data yet: refresh (↻), then reopen the note.",
+  noteCopy: "Copy text",
+  noteCopyHint: "Copy the post text (title, analysis, figures, sources), ready to paste into LinkedIn",
+  noteCopied: "Text copied",
+  noteFailed: "Failed",
+  noteSave: "Save PDF",
+  noteSaveHint: (keys) => `4:5 PDF note (cover, analysis, 4 sections, sources), in Pictures › Glaux (${keys})`,
+  noteSaved: "PDF saved",
+  noteCoverTitle: ["Euro area:", "the month in review"],
+  noteCoverSubtitle: (withAnalysis) =>
+    withAnalysis
+      ? "Official ECB figures, the month's key facts and my analysis."
+      : "Official ECB figures and the month's key facts.",
+  noteContinued: (title) => `${title} (continued)`,
 
   alertsOn: "Alerts: on",
   alertsOff: "Alerts: off",

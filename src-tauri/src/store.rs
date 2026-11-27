@@ -4,7 +4,7 @@
 //   Mac     : ~/Library/Application Support/com.howzen.glaux/cache.json
 //   Windows : %APPDATA%\com.howzen.glaux\cache.json
 // Les préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés)
-// sont à côté, dans prefs.json.
+// sont à côté, dans prefs.json ; l'analyse de chaque note macro mensuelle dans notes.json.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -24,6 +24,7 @@ use crate::data::{
 };
 use crate::ecb::{self, BY_COUNTRY, COUNTRIES, SERIES};
 use crate::i18n::Lang;
+use crate::note::{self, NoteView, MAX_ANALYSIS_CHARS};
 
 /// Au-delà de cet âge, les données sont retéléchargées.
 pub const MAX_AGE: Duration = Duration::from_secs(6 * 60 * 60);
@@ -428,6 +429,9 @@ pub struct Store {
     calendar_path: PathBuf,
     refreshing: AtomicBool,
     last_error: Mutex<Option<String>>,
+    /// Analyse écrite pour chaque note macro (« 2026-12 » → texte), dans notes.json.
+    notes: Mutex<BTreeMap<String, String>>,
+    notes_path: PathBuf,
     /// Langue du système, utilisée tant que l'utilisateur n'en a pas choisi une.
     system_lang: Lang,
 }
@@ -463,6 +467,11 @@ impl Store {
             .and_then(|text| Calendar::parse(&text).ok())
             .map(|saved| Calendar::builtin().merged_with(&saved))
             .unwrap_or_else(Calendar::builtin);
+        let notes_path = dir.join("notes.json");
+        let notes = fs::read_to_string(&notes_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<BTreeMap<String, String>>(&text).ok())
+            .unwrap_or_default();
 
         Self {
             path,
@@ -474,6 +483,8 @@ impl Store {
             calendar_path,
             refreshing: AtomicBool::new(false),
             last_error: Mutex::new(None),
+            notes: Mutex::new(notes),
+            notes_path,
             system_lang,
         }
     }
@@ -896,6 +907,51 @@ impl Store {
             .collect()
     }
 
+    /// Note macro du mois de `today` : faits tirés du cache (séries BCE et calculées),
+    /// calendrier en vigueur, analyse enregistrée pour ce mois.
+    pub fn note(&self, today: NaiveDate) -> NoteView {
+        let month = today.format("%Y-%m").to_string();
+        let analysis = self
+            .notes
+            .lock()
+            .ok()
+            .and_then(|notes| notes.get(&month).cloned())
+            .unwrap_or_default();
+        let calendar = self.calendar();
+        let lang = self.lang();
+        let cache = self.cache.lock().ok();
+        let empty = CacheFile::default();
+        let data = cache.as_deref().unwrap_or(&empty);
+        let get = |id: &str| {
+            series_data(data, id)
+                .map(|(observations, _, _)| observations.into_owned())
+                .unwrap_or_default()
+        };
+        note::build(&get, &calendar, today, &analysis, lang)
+    }
+
+    /// Enregistre l'analyse d'une note (`month` : « 2026-12 »), coupée à `MAX_ANALYSIS_CHARS`
+    /// caractères. Une analyse vide est retirée de notes.json.
+    pub fn set_note_analysis(&self, month: &str, text: &str) -> Result<(), String> {
+        if NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d").is_err()
+            || month.len() != 7
+        {
+            return Err(format!("mois invalide : {month}"));
+        }
+        let text: String = text.chars().take(MAX_ANALYSIS_CHARS).collect();
+        let mut notes = self.notes.lock().map_err(|_| "notes indisponibles")?;
+        if text.trim().is_empty() {
+            notes.remove(month);
+        } else {
+            notes.insert(month.to_string(), text);
+        }
+        if let Some(dir) = self.notes_path.parent() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&*notes).map_err(|e| e.to_string())?;
+        fs::write(&self.notes_path, json).map_err(|e| e.to_string())
+    }
+
     /// Dernier téléchargement complet réussi (secondes Unix).
     pub fn last_success(&self) -> Option<i64> {
         self.cache.lock().ok().and_then(|c| c.last_success)
@@ -1116,6 +1172,44 @@ mod tests {
             .unwrap();
         assert_eq!(fr.group, Some("spreads"));
         assert!(fr.derived);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn note_du_mois_avec_analyse_enregistree() {
+        let dir = temp_dir("note");
+        let store = Store::load(dir.clone(), Lang::Fr);
+        if let Ok(mut cache) = store.cache.lock() {
+            cache.series = vec![
+                series("deposit_rate", &[("2025-06-11", 2.0)]),
+                series("hicp", &[("2026-09", 3.8), ("2026-10", 4.0)]),
+            ];
+        }
+        let today = NaiveDate::from_ymd_opt(2026, 12, 3).unwrap();
+        assert!(store.set_note_analysis("2026-12", "Mon analyse.").is_ok());
+        assert!(store.set_note_analysis("décembre", "x").is_err());
+        let note = store.note(today);
+        assert_eq!(note.month, "2026-12");
+        assert_eq!(note.analysis, "Mon analyse.");
+        // Taux directeur réel calculé par Glaux (2,00 − 4,0), via les séries du cache.
+        let rates = &note.sections[1];
+        assert!(rates
+            .figures
+            .iter()
+            .any(|f| f.value == "\u{2212}2,00\u{a0}%"));
+
+        // Rechargée au lancement suivant ; une analyse vide est retirée.
+        let reopened = Store::load(dir.clone(), Lang::Fr);
+        assert_eq!(reopened.note(today).analysis, "Mon analyse.");
+        assert!(reopened.set_note_analysis("2026-12", "  ").is_ok());
+        assert_eq!(Store::load(dir.clone(), Lang::Fr).note(today).analysis, "");
+        // Analyse trop longue : coupée.
+        let long = "a".repeat(MAX_ANALYSIS_CHARS + 10);
+        assert!(reopened.set_note_analysis("2026-12", &long).is_ok());
+        assert_eq!(
+            reopened.note(today).analysis.chars().count(),
+            MAX_ANALYSIS_CHARS
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

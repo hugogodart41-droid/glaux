@@ -19,7 +19,7 @@ Le premier lancement compile Rust : compte 3 à 5 minutes. Les suivants prennent
 ```bash
 cd src-tauri
 cargo test                          # calculs et lecture des CSV (hors ligne)
-cargo test -- --ignored --nocapture # téléchargement réel des 10 séries BCE (Internet)
+cargo test -- --ignored --nocapture # téléchargement réel des 62 séries BCE (Internet)
 ```
 
 ## Données
@@ -71,8 +71,9 @@ Bandeau sous l'en-tête et rappels du jour J. Calendrier en vigueur (`Calendar` 
   `git add agenda.json && git commit -m "Calendrier 2028" && git push` : toutes les apps installées les
   reçoivent, sans nouvelle version. Les dates intégrées, elles, se mettent à jour avec la version suivante.
 Cache : `~/Library/Application Support/com.howzen.glaux/cache.json` (Mac), `%APPDATA%\com.howzen.glaux\cache.json` (Windows).
-Actualisation automatique si les données ont plus de 6 h (vérification toutes les 15 min), ou via ↻ / ⌘R.
-Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache.
+Actualisation automatique si les données ont plus de 6 h (vérification toutes les 5 min), ou via ↻ / ⌘R.
+Préférences (alertes activées, rappels déjà envoyés, langue, indicateurs affichés) : `prefs.json`, dans le même dossier que le cache ;
+analyses de la note macro : `notes.json`, au même endroit.
 
 ## Image exportée
 
@@ -95,6 +96,27 @@ Menu des formats › « Carrousel PDF », puis « Enregistrer » (⌘E) : un PDF
   assemble en PDF sans bibliothèque (`src-tauri/src/pdf.rs` : une image par page, 810 × 1012,5 points) et
   l'enregistre dans `Images/Glaux/Glaux_carrousel_{date}.pdf` (commande `save_carousel`). Pas de « Copier ».
 - Environ 2 Mo pour 13 pages (LinkedIn accepte jusqu'à 300 pages et 100 Mo).
+
+## Note macro mensuelle
+
+Icône « document » dans l'en-tête (ou ⌘N) : écran « Note macro · {mois} ». ⌘E enregistre le PDF, Échap revient à la liste.
+- Faits du mois écrits par Rust (`src-tauri/src/note.rs`, `note::build`), uniquement à partir du cache (séries BCE et
+  calculs de Glaux) : phrases toutes faites FR/EN, sans interprétation. Chaque chiffre est daté (mois de référence
+  différents : inflation d'octobre, chômage de septembre…) ; une donnée absente supprime sa phrase.
+- 4 rubriques : Prix (inflation totale, sous-jacente, services, écart entre pays, prochaine inflation flash) ;
+  Taux et politique monétaire (taux de dépôt, €STR, taux directeur réel, pente 2-10 ans, prochaine décision BCE) ;
+  Emploi, crédit et monnaie (chômage, écart entre pays, M3, crédit aux entreprises et aux ménages) ;
+  Marchés (taux souverain 10 ans, écarts avec l'Allemagne des 7 pays, écart France, EUR/USD).
+- Règles : variation sur un mois comparée à la précision affichée (« stable » si les deux valeurs s'affichent pareil) ;
+  « plus haut / plus bas niveau depuis … » si la valeur n'avait pas été atteinte depuis au moins 12 mois ; taux de
+  dépôt « relevé / abaissé » seulement si le palier date de moins de 60 jours.
+- « Mon analyse » : texte libre, enregistré 0,6 s après la frappe dans `notes.json` (dossier de données, une entrée par
+  mois « 2026-12 », 5 000 caractères au plus), commandes `get_note` et `set_note_analysis`.
+- « Copier le texte » (`copy_note`) : le post LinkedIn (titre, analyse, chiffres par rubrique, sources), compteur
+  sur 3 000 caractères.
+- « Enregistrer le PDF » (`save_note`) : pages 4:5 dessinées par `src/export.ts` (couverture, analyse, une page par
+  rubrique avec chiffre vedette, page « Sources et méthode » du carrousel), PDF assemblé par Rust dans
+  `Images/Glaux/Glaux_note_macro_{date}.pdf`. Texte de 32 à 24 px selon la place ; au-delà, page « (suite) ».
 
 ## Export Excel
 
@@ -201,17 +223,18 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | Fichier | Rôle |
 |---|---|
 | `src-tauri/src/main.rs` | Icône de la barre des menus, panneau (position, hauteur), commandes appelées par l'interface, fil d'actualisation |
-| `src-tauri/src/ecb.rs` | Les 6 séries BCE, téléchargement et lecture du CSV |
-| `src-tauri/src/data.rs` | Calculs : dernière valeur, variation sur 1 mois, mini-courbe, historique, taux réel, pente |
+| `src-tauri/src/ecb.rs` | Définition des 62 séries BCE, requêtes groupées (12), lecture du CSV |
+| `src-tauri/src/data.rs` | Observations, fréquences, dernière valeur, variation, mini-courbe, historique |
 | `src-tauri/src/agenda.rs` | Calendrier des décisions BCE et des inflations flash (dates intégrées + `agenda.json` publié) et rappels du jour J |
 | `agenda.json` | Calendrier publié, lu par les apps installées (**à compléter chaque année**) |
 | `src-tauri/src/macos_notify.rs` | Notifications Mac (UNUserNotificationCenter, repli osascript en mode dev) |
 | `src-tauri/src/alerts.rs` | Textes des notifications : changement de taux BCE, nouvelle inflation |
 | `src-tauri/src/i18n.rs` | Langue (système ou choix), noms des mois et nombres en FR / EN |
 | `src-tauri/src/excel.rs` | Export Excel des historiques (feuilles quotidienne, mensuelle, par pays, courbe des taux, sources) |
-| `src-tauri/src/pdf.rs` | Carrousel LinkedIn : PDF minimal, une image JPEG par page |
-| `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification quotidienne, installation au clic |
-| `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation), indicateurs calculés à la demande, préférences (dont lignes affichées et leur ordre) |
+| `src-tauri/src/pdf.rs` | Carrousel LinkedIn et note macro : PDF minimal, une image JPEG par page |
+| `src-tauri/src/note.rs` | Note macro mensuelle : faits du mois en phrases FR/EN, texte du post LinkedIn |
+| `src-tauri/src/updates.rs` | Mises à jour automatiques : vérification au lancement, toutes les 6 h et au réveil, installation au clic |
+| `src-tauri/src/store.rs` | Cache local (lecture, écriture, actualisation), indicateurs calculés à la demande (taux réel, pente, écarts), rubriques, préférences (lignes affichées, ordre, pays) ; analyses de la note macro (`notes.json`) |
 | `src-tauri/tauri.conf.json` | Fenêtre, identifiant de l'app, icônes, sécurité, mises à jour |
 | `src-tauri/tauri.release.conf.json` | En plus pour les versions publiées : DMG, installeur Windows, fichiers de mise à jour |
 | `.github/workflows/` | GitHub Actions : tests à chaque envoi, compilation et brouillon de version à chaque étiquette |
@@ -226,6 +249,7 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 | `src/curve.ts` | Courbe des taux : écart 10 ans − 2 ans, courbes à comparer, échéances de l'axe |
 | `src/export.ts` | Image exportée : portrait 1080 × 1350, paysage 1200 × 675, story 1080 × 1920 (une table de positions par format), enregistrée dans Images › Glaux ou copiée ; pages du carrousel (couverture, sources) |
 | `src/agenda.ts` | Bandeau d'agenda : compte à rebours (les dates viennent de Rust) |
+| `src/note.ts` | Écran « Note macro » : analyse enregistrée, copie du post, PDF |
 | `src/indicators.ts` | Nom, précision et textes d'explication de chaque indicateur (FR / EN) |
 | `src/i18n.ts` | Tous les textes de l'interface, en français et en anglais |
 | `src/format.ts`, `src/tooltip.ts`, `src/types.ts` | Mise en forme des nombres et dates, infobulle maison, types des données |
@@ -243,4 +267,5 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 9. V2 : écarts de taux par pays, formats d'image + copier, export Excel, choix et ordre des indicateurs (v0.2.0)
 10. V3 : plus de données BCE, courbe des taux AAA, panneau agrandi, rubriques et indicateurs par pays (v0.3.0),
     carrousel LinkedIn, fiabilité (DMG universel, calendrier publié, clic sur notification, mises à jour
-    toutes les 6 h, actualisation 2,5 fois plus rapide) ← **ici** (v0.4.0)
+    toutes les 6 h, actualisation 2,5 fois plus rapide) (v0.4.0)
+11. Note macro mensuelle : faits du mois, analyse, post LinkedIn, PDF 4:5 ← **ici** (v0.5.0 à publier)

@@ -29,6 +29,13 @@
               <circle class="knob" cx="5.5" cy="10" r="1.7" stroke="currentColor" stroke-width="1.2" />
             </svg>
           </button>
+          <!-- Note macro du mois (src/note.ts, src-tauri/src/note.rs). -->
+          <button type="button" class="icon-button" id="note-open" aria-label="Note macro du mois">
+            <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+              <path d="M2.2 0.75h6l2.6 2.6v8.9H2.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <path d="M4.2 5.6h4.6M4.2 7.8h4.6M4.2 10h3" fill="none" stroke="currentColor" stroke-width="1.1" />
+            </svg>
+          </button>
           <!-- Export Excel de toutes les séries (src-tauri/src/excel.rs). -->
           <button type="button" class="icon-button" id="excel" aria-label="Exporter en Excel">
             <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
@@ -110,6 +117,27 @@
           <span class="customize__help" id="customize-help"></span>
         </div>
         <div id="customize-sections"></div>
+      </section>
+
+      <!-- Écran « Note macro » : faits du mois (Rust), analyse, texte du post, PDF (src/note.ts). -->
+      <section class="note" id="note" hidden>
+        <div class="customize__bar">
+          <button type="button" class="link-button" id="note-back">‹ Indicateurs</button>
+          <span class="detail__actions">
+            <button type="button" class="link-button" id="note-copy">Copier le texte</button>
+            <button type="button" class="link-button link-button--gold" id="note-save">Enregistrer le PDF</button>
+          </span>
+        </div>
+        <div class="customize__head">
+          <span class="detail__title" id="note-title">Note macro</span>
+          <span class="customize__help" id="note-help"></span>
+        </div>
+        <div class="note__editor">
+          <label class="note__label" for="note-analysis" id="note-analysis-label">Mon analyse</label>
+          <textarea class="note__analysis" id="note-analysis" rows="5" maxlength="5000" spellcheck="true"></textarea>
+          <span class="note__count" id="note-count"></span>
+        </div>
+        <div id="note-sections"></div>
       </section>
 
       <footer class="panel__footer">

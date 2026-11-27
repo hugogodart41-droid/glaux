@@ -586,8 +586,14 @@ export async function renderCurveExportImage(
 /** Un chiffre clé de la couverture : nom, valeur, date de la donnée. */
 export type CoverFigure = { label: string; value: string; date: string };
 
-/** Couverture : « La zone euro en chiffres », mois, 4 chiffres clés, invitation à faire défiler. */
-export async function renderCarouselCover(figures: CoverFigure[]): Promise<Uint8Array> {
+/** Textes d'une couverture : petit titre en or, grand titre (2 lignes), sous-titre. */
+export type CoverTexts = { kicker: string; title: string[]; subtitle: string };
+
+/**
+ * Couverture : « La zone euro en chiffres » (ou les textes de `texts`, ex. note macro),
+ * 4 chiffres clés, invitation à faire défiler.
+ */
+export async function renderCarouselCover(figures: CoverFigure[], texts?: CoverTexts): Promise<Uint8Array> {
   const layout = LAYOUTS.portrait;
   const { canvas, ctx } = newCanvas(layout);
   const { margin, width } = layout;
@@ -595,16 +601,31 @@ export async function renderCarouselCover(figures: CoverFigure[]): Promise<Uint8
   drawHeader(ctx, layout);
 
   const month = new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(new Date());
+  const kicker = texts?.kicker ?? strings.coverKicker(month);
+  const title = texts?.title ?? strings.coverTitle;
   ctx.textAlign = "left";
   ctx.fillStyle = COLORS.or;
   ctx.font = `600 30px ${SANS}`;
-  ctx.fillText(strings.coverKicker(month).toUpperCase(), margin, 290);
+  ctx.fillText(fitText(ctx, kicker.toUpperCase(), width - 2 * margin), margin, 290);
   ctx.fillStyle = COLORS.creme;
-  ctx.font = `600 100px ${SERIF}`;
-  strings.coverTitle.forEach((line, i) => ctx.fillText(line, margin - 4, 410 + i * 112));
+  // Grand titre réduit si une ligne dépasse la largeur (« the month in review »).
+  let size = 100;
+  ctx.font = `600 ${size}px ${SERIF}`;
+  while (size > 70 && title.some((line) => ctx.measureText(line).width > width - 2 * margin)) {
+    size -= 4;
+    ctx.font = `600 ${size}px ${SERIF}`;
+  }
+  title.forEach((line, i) => ctx.fillText(line, margin - 4, 410 + i * 112));
   ctx.fillStyle = COLORS.cremeDoux;
   ctx.font = `32px ${SANS}`;
-  drawBlock(ctx, strings.coverSubtitle, { x: margin, y: 610, size: 32, maxWidth: width - 2 * margin, lineHeight: 44, lines: 2 });
+  drawBlock(ctx, texts?.subtitle ?? strings.coverSubtitle, {
+    x: margin,
+    y: 610,
+    size: 32,
+    maxWidth: width - 2 * margin,
+    lineHeight: 44,
+    lines: 2,
+  });
 
   // Chiffres clés : 2 colonnes × 2 lignes, dans des cadres.
   const gap = 40;
@@ -697,8 +718,9 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number):
   return `${cut.trimEnd()}…`;
 }
 
-/** Enregistre le carrousel (PDF assemblé par Rust, Images › Glaux). Renvoie le chemin du fichier. */
-export function saveCarousel(pages: Uint8Array[]): Promise<string> {
+/** Envoie des pages JPEG à Rust (`command` : « save_carousel », « save_note »), qui les
+ * assemble en PDF dans Images › Glaux. Renvoie le chemin du fichier. */
+function savePdfPages(command: string, pages: Uint8Array[]): Promise<string> {
   const total = pages.reduce((sum, page) => sum + page.length, 0);
   const body = new Uint8Array(total);
   let offset = 0;
@@ -706,9 +728,135 @@ export function saveCarousel(pages: Uint8Array[]): Promise<string> {
     body.set(page, offset);
     offset += page.length;
   }
-  return invoke<string>("save_carousel", body, {
+  return invoke<string>(command, body, {
     headers: { "x-pages": pages.map((page) => page.length).join(",") },
   });
+}
+
+/** Enregistre le carrousel (PDF assemblé par Rust, Images › Glaux). Renvoie le chemin du fichier. */
+export function saveCarousel(pages: Uint8Array[]): Promise<string> {
+  return savePdfPages("save_carousel", pages);
+}
+
+/** Enregistre la note macro (PDF assemblé par Rust, Images › Glaux). Renvoie le chemin du fichier. */
+export function saveNotePdf(pages: Uint8Array[]): Promise<string> {
+  return savePdfPages("save_note", pages);
+}
+
+// ---------- Note macro mensuelle (PDF) ----------
+// Pages 4:5 de texte : petit titre, grand titre, chiffre vedette (facultatif), paragraphes.
+// La taille du texte baisse de 32 à 24 px pour tout tenir sur une page ; au-delà, la suite
+// passe sur une page « (suite) ».
+
+/** Chiffre vedette en haut d'une rubrique : grande valeur en or et sa légende. */
+export type NoteHero = { value: string; caption: string };
+
+/** Haut de la zone de texte (sans / avec chiffre vedette) et bas (au-dessus du pied de page). */
+const TEXT_TOP = 400;
+const TEXT_TOP_HERO = 620;
+const TEXT_BOTTOM = LAYOUTS.portrait.footer.rule - 40;
+const TEXT_SIZES = [32, 30, 28, 26, 24];
+
+type TextLine = { text: string; first: boolean };
+
+/** Découpe les paragraphes en lignes (police déjà choisie) ; `first` : début de paragraphe. */
+function paragraphLines(ctx: CanvasRenderingContext2D, paragraphs: string[], maxWidth: number): TextLine[][] {
+  return paragraphs.map((paragraph) =>
+    wrap(ctx, paragraph, maxWidth, 1000).map((text, i) => ({ text, first: i === 0 })),
+  );
+}
+
+/**
+ * Pages d'une rubrique (ou de l'analyse) : `kicker` en or, `title`, `hero` sur la première
+ * page, `paragraphs` (précédés d'un tiret or si `bullets`).
+ */
+export async function renderNoteTextPages(
+  kicker: string,
+  title: string,
+  paragraphs: string[],
+  options: { hero?: NoteHero; bullets: boolean },
+): Promise<Uint8Array[]> {
+  const layout = LAYOUTS.portrait;
+  const { margin, width } = layout;
+  const indent = options.bullets ? 34 : 0;
+  const maxWidth = width - 2 * margin - indent;
+  const measure = newCanvas(layout).ctx;
+  const firstTop = options.hero ? TEXT_TOP_HERO : TEXT_TOP;
+
+  // Plus grande taille où tout tient sur la première page ; sinon 24 px et des pages de suite.
+  let size = TEXT_SIZES[TEXT_SIZES.length - 1];
+  let blocks: TextLine[][] = [];
+  for (const candidate of TEXT_SIZES) {
+    measure.font = `${candidate}px ${SANS}`;
+    blocks = paragraphLines(measure, paragraphs, maxWidth);
+    const lineHeight = Math.round(candidate * 1.42);
+    const gap = Math.round(candidate * 0.7);
+    const height = blocks.reduce((sum, lines) => sum + lines.length * lineHeight, 0) + gap * (blocks.length - 1);
+    size = candidate;
+    if (height <= TEXT_BOTTOM - firstTop) break;
+  }
+  const lineHeight = Math.round(size * 1.42);
+  const gap = Math.round(size * 0.7);
+
+  // Répartition des lignes sur les pages.
+  const pages: { lines: TextLine[]; gapsBefore: boolean[] }[] = [{ lines: [], gapsBefore: [] }];
+  let y = firstTop;
+  blocks.forEach((lines, k) => {
+    lines.forEach((line, i) => {
+      const extra = k > 0 && i === 0 ? gap : 0;
+      // Ligne de base au-delà du bas de la zone de texte : page suivante.
+      if (y + extra + size > TEXT_BOTTOM && pages[pages.length - 1].lines.length > 0) {
+        pages.push({ lines: [], gapsBefore: [] });
+        y = TEXT_TOP;
+      }
+      const page = pages[pages.length - 1];
+      const withGap = page.lines.length > 0 && extra > 0;
+      page.lines.push(line);
+      page.gapsBefore.push(withGap);
+      y += (withGap ? gap : 0) + lineHeight;
+    });
+  });
+
+  const strings = t();
+  const images: Uint8Array[] = [];
+  for (const [index, page] of pages.entries()) {
+    const { canvas, ctx } = newCanvas(layout);
+    drawHeader(ctx, layout);
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLORS.or;
+    ctx.font = `600 28px ${SANS}`;
+    ctx.fillText(fitText(ctx, kicker.toUpperCase(), width - 2 * margin), margin, 238);
+    ctx.fillStyle = COLORS.creme;
+    ctx.font = `600 64px ${SERIF}`;
+    ctx.fillText(fitText(ctx, index === 0 ? title : strings.noteContinued(title), width - 2 * margin), margin, 318);
+
+    if (index === 0 && options.hero) {
+      ctx.fillStyle = COLORS.or;
+      ctx.font = `700 120px ${SANS}`;
+      ctx.fillText(options.hero.value, margin - 4, 480);
+      ctx.fillStyle = COLORS.cremeDoux;
+      ctx.font = `28px ${SANS}`;
+      ctx.fillText(fitText(ctx, options.hero.caption, width - 2 * margin), margin, 536);
+      ctx.fillStyle = COLORS.ligne;
+      ctx.fillRect(margin, 576, width - 2 * margin, 2);
+    }
+
+    let lineY = (index === 0 ? firstTop : TEXT_TOP) + size;
+    ctx.font = `${size}px ${SANS}`;
+    page.lines.forEach((line, i) => {
+      if (page.gapsBefore[i]) lineY += gap;
+      if (options.bullets && line.first) {
+        ctx.fillStyle = COLORS.or;
+        ctx.fillRect(margin, lineY - size * 0.36, 18, 3);
+      }
+      ctx.fillStyle = COLORS.creme;
+      ctx.fillText(line.text, margin + indent, lineY);
+      lineY += lineHeight;
+    });
+    drawSourceLine(ctx, layout);
+    images.push(await encode(canvas, "jpeg"));
+  }
+  return images;
 }
 
 /** Enregistre l'image (Images › Glaux) ; `id` : indicateur ou groupe. Renvoie le chemin du fichier. */

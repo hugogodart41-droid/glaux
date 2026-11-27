@@ -58,6 +58,7 @@ import {
   type Display,
   type GroupDisplay,
 } from "./indicators";
+import { applyNoteTexts, flushNote, loadNote, saveNote, setupNote } from "./note";
 import { setupTooltips } from "./tooltip";
 import type { DashboardView, IndicatorView, Observation, RowView, Section } from "./types";
 
@@ -77,6 +78,8 @@ let detailRequest = 0;
 let statusFlash: { text: string; detail: string; until: number } | null = null;
 /** Écran « Indicateurs affichés » ouvert. */
 let customizeOpen = false;
+/** Écran « Note macro » ouvert (src/note.ts). */
+let noteOpen = false;
 /** Enregistrements de l'affichage en cours : les lignes reçues entre-temps sont ignorées. */
 let layoutSaves = 0;
 /** Format de l'image exportée, retenu d'une fois sur l'autre (stockage local de l'interface). */
@@ -314,6 +317,7 @@ function render(incoming: DashboardView): void {
 
   renderList(view);
   if (customizeOpen) renderCustomize();
+  if (noteOpen && !view.refreshing) void loadNote(); // nouvelles données ou autre langue
   renderStatus(view);
   renderUpdate(view);
   renderAgenda();
@@ -363,18 +367,22 @@ function showScreen(): void {
   const list = $("indicators");
   const detail = $("detail");
   const customize = $("customize");
+  const noteScreen = $("note");
   document.querySelector(".panel")?.classList.toggle("is-large", large);
   if (large) {
-    // Agrandi : la liste reste visible ; à droite, la vue détail ou « Indicateurs affichés ».
+    // Agrandi : la liste reste visible ; à droite, la vue détail, « Indicateurs affichés »
+    // ou la note macro.
     if (list) list.hidden = false;
-    if (detail) detail.hidden = customizeOpen || detailId === null;
+    if (detail) detail.hidden = customizeOpen || noteOpen || detailId === null;
     markSelectedRow();
   } else {
-    if (list) list.hidden = detailId !== null || customizeOpen;
+    if (list) list.hidden = detailId !== null || customizeOpen || noteOpen;
     if (detail) detail.hidden = detailId === null;
   }
   if (customize) customize.hidden = !customizeOpen;
+  if (noteScreen) noteScreen.hidden = !noteOpen;
   $("customize-open")?.classList.toggle("is-active", customizeOpen);
+  $("note-open")?.classList.toggle("is-active", noteOpen);
   renderLargeButton();
   scheduleFit();
 }
@@ -406,6 +414,8 @@ function ensureSelection(): void {
 function openDetail(id: string): void {
   detailId = id;
   customizeOpen = false;
+  if (noteOpen) void flushNote();
+  noteOpen = false;
   showScreen();
   void renderDetail();
 }
@@ -983,6 +993,26 @@ async function exportExcel(): Promise<void> {
   }, flash.until - Date.now() + 50);
 }
 
+// ---------- Note macro mensuelle (src/note.ts) ----------
+
+function openNote(): void {
+  if (!large) detailId = null; // agrandi : la vue détail revient à la fermeture
+  customizeOpen = false;
+  noteOpen = true;
+  showScreen();
+  void loadNote();
+}
+
+function closeNote(): void {
+  void flushNote(); // analyse en cours de frappe : enregistrée
+  noteOpen = false;
+  showScreen();
+  if (large) {
+    ensureSelection();
+    void renderDetail();
+  }
+}
+
 // ---------- Indicateurs affichés (choix et ordre des lignes) ----------
 
 /** Nom d'une ligne : indicateur ou groupe. */
@@ -993,6 +1023,8 @@ function rowLabel(id: string): string {
 
 function openCustomize(): void {
   if (!large) detailId = null; // agrandi : la vue détail revient à la fermeture
+  if (noteOpen) void flushNote();
+  noteOpen = false;
   customizeOpen = true;
   renderCustomize();
   showScreen();
@@ -1323,6 +1355,7 @@ function desiredHeight(): number {
     .map((name) => document.querySelector<HTMLElement>(`.${name}`)?.offsetHeight ?? 0)
     .reduce((a, b) => a + b, PANEL_BORDER);
   if (customizeOpen) return fixed + contentHeight($("customize"));
+  if (noteOpen) return Math.max(listHeight, DETAIL_MIN_HEIGHT);
   if (detailId) return Math.max(listHeight, DETAIL_MIN_HEIGHT);
   listHeight = fixed + contentHeight($("indicators"));
   return listHeight;
@@ -1459,6 +1492,11 @@ function applyStaticTexts(): void {
   const customize = $("customize-open");
   customize?.setAttribute("aria-label", strings.customizeAria);
   customize?.setAttribute("data-tooltip", strings.customizeHint(keys(",")));
+  set("#note-back", strings.back, strings.backHint);
+  const noteButton = $("note-open");
+  noteButton?.setAttribute("aria-label", strings.noteAria);
+  noteButton?.setAttribute("data-tooltip", strings.noteHint(keys("N")));
+  applyNoteTexts();
   const excel = $("excel");
   excel?.setAttribute("aria-label", strings.excelAria);
   excel?.setAttribute("data-tooltip", strings.excelHint);
@@ -1486,6 +1524,8 @@ function setupButtons(): void {
   $("refresh")?.addEventListener("click", refreshNow);
   $("excel")?.addEventListener("click", () => void exportExcel());
   $("customize-open")?.addEventListener("click", () => (customizeOpen ? closeCustomize() : openCustomize()));
+  $("note-open")?.addEventListener("click", () => (noteOpen ? closeNote() : openNote()));
+  $("note-back")?.addEventListener("click", closeNote);
   $("large-toggle")?.addEventListener("click", toggleLarge);
   $("language")?.addEventListener("click", toggleLanguage);
   $("update")?.addEventListener("click", installUpdate);
@@ -1529,11 +1569,11 @@ function setupButtons(): void {
 }
 
 // Échap : retour à la liste, ou ferme le panneau. ⌘Q quitte, ⌘R actualise,
-// ⌘, ouvre « Indicateurs affichés » ;
+// ⌘, ouvre « Indicateurs affichés », ⌘N la note macro (⌘E y enregistre le PDF) ;
 // en vue détail : ⌘E enregistre l'image, ⌘C la copie (sauf si du texte est sélectionné).
 function listenForShortcuts(): void {
   window.addEventListener("keydown", (event) => {
-    if (large && !customizeOpen && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+    if (large && !customizeOpen && !noteOpen && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       const target = event.target as Element | null;
       if (!target?.closest("select, input, textarea")) {
         event.preventDefault();
@@ -1548,6 +1588,10 @@ function listenForShortcuts(): void {
       }
       if (customizeOpen) {
         closeCustomize();
+        return;
+      }
+      if (noteOpen) {
+        closeNote();
         return;
       }
       getCurrentWindow()
@@ -1568,10 +1612,17 @@ function listenForShortcuts(): void {
       event.preventDefault();
       if (customizeOpen) closeCustomize();
       else openCustomize();
+    } else if (key === "n") {
+      event.preventDefault();
+      if (noteOpen) closeNote();
+      else openNote();
+    } else if (key === "e" && noteOpen) {
+      event.preventDefault();
+      void saveNote();
     } else if (key === "e" && detailId) {
       event.preventDefault();
       void exportCurrent("save");
-    } else if (key === "c" && detailId && !window.getSelection()?.toString()) {
+    } else if (key === "c" && detailId && !noteOpen && !window.getSelection()?.toString()) {
       event.preventDefault();
       void exportCurrent("copy");
     }
@@ -1591,6 +1642,7 @@ function renderToday(): void {
 // ---------- Démarrage ----------
 
 async function start(): Promise<void> {
+  setupNote({ endParagraphs, keys }); // avant les textes : raccourcis des infobulles
   applyStaticTexts();
   setupButtons();
   setupCustomize();
