@@ -11,6 +11,18 @@ pub enum Frequency {
     Daily,
     /// Une valeur par mois : dates « 2026-10 ».
     Monthly,
+    /// Une valeur par trimestre : dates « 2026-Q3 » (PIB).
+    Quarterly,
+}
+
+impl Frequency {
+    /// Écart entre deux publications, en mois (variation affichée : sur 1 mois ou 1 trimestre).
+    pub fn months(self) -> u32 {
+        match self {
+            Frequency::Quarterly => 3,
+            _ => 1,
+        }
+    }
 }
 
 /// Une observation : une date (au format BCE) et une valeur.
@@ -33,9 +45,14 @@ pub struct Summary {
     pub since: Option<String>,
 }
 
-/// Convertit une période BCE en date : « 2026-11-21 » ou « 2026-10 » (→ 1er du mois).
+/// Convertit une période BCE en date : « 2026-11-21 », « 2026-10 » (→ 1er du mois) ou
+/// « 2026-Q3 » (→ 1er jour du trimestre : 1er juillet).
 pub fn parse_period(period: &str) -> Option<NaiveDate> {
     let period = period.trim();
+    if let Some((year, quarter)) = period.split_once("-Q") {
+        let quarter: u32 = quarter.parse().ok().filter(|q| (1..=4).contains(q))?;
+        return NaiveDate::from_ymd_opt(year.parse().ok()?, quarter * 3 - 2, 1);
+    }
     NaiveDate::parse_from_str(period, "%Y-%m-%d")
         .ok()
         .or_else(|| NaiveDate::parse_from_str(&format!("{period}-01"), "%Y-%m-%d").ok())
@@ -76,8 +93,8 @@ fn value_at(observations: &[Observation], date: NaiveDate) -> Option<&Observatio
 
 /// Calcule le résumé d'une série. `observations` doit être triée par date croissante.
 ///
-/// Variation sur 1 mois :
-/// - série mensuelle : dernier mois publié comparé au mois précédent ;
+/// Variation sur 1 mois (1 trimestre pour une série trimestrielle) :
+/// - série mensuelle ou trimestrielle : dernière période publiée comparée à la précédente ;
 /// - série quotidienne : aujourd'hui comparé à il y a un mois (marche aussi pour
 ///   un taux directeur qui n'a pas bougé depuis longtemps).
 pub fn summarize(
@@ -95,11 +112,11 @@ pub fn summarize(
     };
 
     let anchor = match frequency {
-        Frequency::Monthly => parse_period(&latest.date).unwrap_or(today),
+        Frequency::Monthly | Frequency::Quarterly => parse_period(&latest.date).unwrap_or(today),
         Frequency::Daily => today,
     };
     let reference = anchor
-        .checked_sub_months(Months::new(1))
+        .checked_sub_months(Months::new(frequency.months()))
         .and_then(|ref_date| value_at(observations, ref_date))
         .cloned();
 
@@ -128,7 +145,8 @@ const SPARK_WEEKS: u32 = 52;
 /// - série quotidienne : une valeur par semaine (53 points), ce qui lisse le bruit
 ///   et marche aussi pour un taux en escalier (valeur en vigueur chaque semaine) ;
 /// - série mensuelle : une valeur par mois (13 points, du même mois l'an dernier
-///   au dernier mois publié).
+///   au dernier mois publié) ;
+/// - série trimestrielle : une valeur par trimestre (5 points sur un an).
 ///
 /// Les points sont équidistants : l'interface n'a besoin que des valeurs.
 pub fn sparkline(observations: &[Observation], frequency: Frequency, today: NaiveDate) -> Vec<f64> {
@@ -141,11 +159,12 @@ pub fn sparkline(observations: &[Observation], frequency: Frequency, today: Naiv
             .rev()
             .filter_map(|weeks_ago| today.checked_sub_days(chrono::Days::new(7 * weeks_ago as u64)))
             .collect(),
-        Frequency::Monthly => {
+        Frequency::Monthly | Frequency::Quarterly => {
             let last = parse_period(&latest.date).unwrap_or(today);
-            (0..=12)
+            let step = frequency.months();
+            (0..=12 / step)
                 .rev()
-                .filter_map(|months_ago| last.checked_sub_months(Months::new(months_ago)))
+                .filter_map(|periods_ago| last.checked_sub_months(Months::new(periods_ago * step)))
                 .collect()
         }
     };
@@ -161,7 +180,7 @@ pub fn sparkline(observations: &[Observation], frequency: Frequency, today: Naiv
 /// - série quotidienne : 1 point par jour jusqu'à 1 an, 1 point par semaine au-delà
 ///   (≈ 260 points sur 5 ans : courbe nette et légère) ; chaque point est la valeur
 ///   en vigueur ce jour-là, ce qui garde la forme en escalier du taux directeur ;
-/// - série mensuelle : les mois publiés sur la période.
+/// - série mensuelle ou trimestrielle : les périodes publiées sur la période.
 pub fn history(
     observations: &[Observation],
     frequency: Frequency,
@@ -200,7 +219,7 @@ pub fn history(
                 })
                 .collect()
         }
-        Frequency::Monthly => {
+        Frequency::Monthly | Frequency::Quarterly => {
             let last = parse_period(&latest.date).unwrap_or(today);
             let start = last.checked_sub_months(Months::new(months)).unwrap_or(last);
             observations
@@ -480,5 +499,37 @@ mod tests {
         let data = [obs("2026-11-20", 1.0), obs("2026-11-23", 1.1)];
         let s = summarize(&data, Frequency::Daily, false, day("2026-11-24"));
         assert_eq!(s.reference, None);
+    }
+
+    #[test]
+    fn series_trimestrielles() {
+        assert_eq!(parse_period("2026-Q3"), Some(day("2026-07-01")));
+        assert_eq!(parse_period("2026-Q1"), Some(day("2026-01-01")));
+        assert_eq!(parse_period("2026-Q5"), None);
+        let data: Vec<Observation> = [
+            ("2025-Q3", 0.3),
+            ("2025-Q4", 0.2),
+            ("2026-Q1", 0.0),
+            ("2026-Q2", 0.6),
+            ("2026-Q3", 0.4),
+        ]
+        .iter()
+        .map(|(d, v)| Observation {
+            date: d.to_string(),
+            value: *v,
+        })
+        .collect();
+        // Variation sur 1 trimestre : comparée au trimestre d'avant.
+        let s = summarize(&data, Frequency::Quarterly, false, day("2026-11-27"));
+        assert_eq!(s.reference.unwrap().date, "2026-Q2");
+        // Mini-courbe : 5 trimestres (un an).
+        assert_eq!(
+            sparkline(&data, Frequency::Quarterly, day("2026-11-27")),
+            vec![0.3, 0.2, 0.0, 0.6, 0.4]
+        );
+        assert_eq!(
+            history(&data, Frequency::Quarterly, 6, day("2026-11-27")).len(),
+            3
+        );
     }
 }

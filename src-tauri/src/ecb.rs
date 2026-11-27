@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 use crate::data::{parse_period, Frequency, Observation};
 
@@ -33,14 +33,14 @@ impl SeriesDef {
 
 /// Séries téléchargées, dans l'ordre par défaut du panneau (rangé ensuite par rubrique,
 /// voir `section_of` dans store.rs) :
-/// - les 11 indicateurs du panneau (5 masqués tant que l'utilisateur ne les affiche pas,
+/// - les 13 indicateurs du panneau (6 masqués tant que l'utilisateur ne les affiche pas,
 ///   voir `DEFAULT_HIDDEN` dans store.rs) ; inflation et chômage existent aussi par pays
 ///   (`BY_COUNTRY`, plus bas) ;
 /// - les taux à 10 ans par pays (ligne « Taux à 10 ans par pays », 3 pays au choix), qui
 ///   servent aussi aux écarts de taux (calculés dans store.rs) ;
 /// - les taux de la courbe AAA (3 mois → 30 ans), affichés ensemble sur la ligne
 ///   « Courbe des taux ».
-pub const SERIES: [SeriesDef; 30] = [
+pub const SERIES: [SeriesDef; 32] = [
     // Taux de la facilité de dépôt : le taux directeur de référence de la BCE.
     SeriesDef {
         id: "deposit_rate",
@@ -83,6 +83,26 @@ pub const SERIES: [SeriesDef; 30] = [
         flow: "LFSI",
         key: "M.U2.S.UNEHRT.TOTAL0.15_74.T",
         frequency: Frequency::Monthly,
+        step: false,
+        shown: true,
+    },
+    // PIB en volume (prix chaînés), corrigé des variations saisonnières et des jours ouvrés,
+    // croissance sur 1 trimestre (« G1 ») et sur 1 an (« GY ») ; jeu « MNA » (comptes
+    // nationaux, Eurostat). Zone euro à 21 pays à composition fixe (« I10 », Bulgarie comprise
+    // depuis le 1er janvier 2026) : la série « I9 » (20 pays) s'arrête au 1er trimestre 2026.
+    SeriesDef {
+        id: "gdp_qoq",
+        flow: "MNA",
+        key: "Q.Y.I10.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.LR.G1",
+        frequency: Frequency::Quarterly,
+        step: false,
+        shown: true,
+    },
+    SeriesDef {
+        id: "gdp_yoy",
+        flow: "MNA",
+        key: "Q.Y.I10.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.LR.GY",
+        frequency: Frequency::Quarterly,
         step: false,
         shown: true,
     },
@@ -354,7 +374,7 @@ impl CountryDef {
 }
 
 /// Indicateurs par pays : mêmes définitions que la série zone euro correspondante.
-pub const BY_COUNTRY: [CountryDef; 4] = [
+pub const BY_COUNTRY: [CountryDef; 6] = [
     // Inflation IPCH sur 1 an.
     CountryDef {
         base: "hicp",
@@ -390,6 +410,24 @@ pub const BY_COUNTRY: [CountryDef; 4] = [
         prefix: "M.",
         suffix: ".S.UNEHRT.TOTAL0.15_74.T",
         frequency: Frequency::Monthly,
+    },
+    // PIB : croissance sur 1 trimestre et sur 1 an. Par pays, l'unité est « XDC » (monnaie
+    // nationale, l'euro pour ces 8 pays) : la série « EUR » n'existe pas en croissance.
+    CountryDef {
+        base: "gdp_qoq",
+        ids: by_country!("gdp_qoq"),
+        flow: "MNA",
+        prefix: "Q.Y.",
+        suffix: ".W2.S1.S1.B.B1GQ._Z._Z._Z.XDC.LR.G1",
+        frequency: Frequency::Quarterly,
+    },
+    CountryDef {
+        base: "gdp_yoy",
+        ids: by_country!("gdp_yoy"),
+        flow: "MNA",
+        prefix: "Q.Y.",
+        suffix: ".W2.S1.S1.B.B1GQ._Z._Z._Z.XDC.LR.GY",
+        frequency: Frequency::Quarterly,
     },
 ];
 
@@ -520,10 +558,11 @@ fn get_csv(agent: &ureq::Agent, url: &str) -> Result<Option<String>, String> {
         .map_err(|e| format!("BCE injoignable ({e})"))?;
 
     match response.status().as_u16() {
+        // Réponse vide (aucune observation depuis la date demandée) : aucune donnée.
         200 => response
             .body_mut()
             .read_to_string()
-            .map(Some)
+            .map(|body| (!body.trim().is_empty()).then_some(body))
             .map_err(|e| format!("réponse interrompue ({e})")),
         404 => Ok(None),
         code => Err(format!("la BCE a répondu avec le code HTTP {code}")),
@@ -542,7 +581,7 @@ fn get(agent: &ureq::Agent, url: &str) -> Result<Option<Vec<Observation>>, Strin
 // La BCE met environ 2 s à répondre à chaque requête, quelle que soit la quantité de
 // données. Les séries dont les clés ne diffèrent que par une dimension (pays, échéance…)
 // partent donc ensemble : « YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M+SR_6M+… » ramène toute la
-// courbe. 12 requêtes au lieu de 34.
+// courbe. 15 requêtes au lieu de 50.
 
 /// Une requête BCE : une série seule, ou un groupe de séries (identifiant, clé complète).
 pub struct Download {
@@ -561,6 +600,15 @@ fn download_group(id: &str) -> Option<&'static str> {
     }
     if id == "loans_nfc" || id == "loans_hh" {
         return Some("loans"); // crédit aux entreprises et aux ménages
+    }
+    // PIB : la clé de la zone euro (« I10 », « EUR ») diffère de celle des pays (« XDC ») sur
+    // deux dimensions. Zone euro : sur 1 trimestre et sur 1 an ensemble ; pays : une requête
+    // par mesure.
+    match id {
+        "gdp_qoq" | "gdp_yoy" => return Some("gdp"),
+        _ if id.starts_with("gdp_qoq_") => return Some("gdp_qoq_countries"),
+        _ if id.starts_with("gdp_yoy_") => return Some("gdp_yoy_countries"),
+        _ => {}
     }
     // Inflation, sous-jacente, services, chômage : zone euro et 8 pays ensemble.
     BY_COUNTRY
@@ -619,6 +667,19 @@ pub fn combined_key(keys: &[String]) -> Option<String> {
     (varying <= 1).then(|| combined.join("."))
 }
 
+/// Début de la période demandée à la BCE. Pour une série trimestrielle, le 1er jour du
+/// trimestre : l'API ignore un trimestre commencé avant `startPeriod` (« 2026-08-27 » ne
+/// renvoie pas le 3e trimestre 2026, « 2026-07-01 » si).
+fn request_start(start: NaiveDate, frequency: Frequency) -> NaiveDate {
+    match frequency {
+        Frequency::Quarterly => {
+            let first_month = (start.month() - 1) / 3 * 3 + 1;
+            NaiveDate::from_ymd_opt(start.year(), first_month, 1).unwrap_or(start)
+        }
+        _ => start,
+    }
+}
+
 /// Réponse d'une requête : séries reçues (identifiant, observations), et identifiants des
 /// séries de `SERIES` absentes.
 pub type Received = (Vec<(&'static str, Vec<Observation>)>, Vec<&'static str>);
@@ -637,6 +698,16 @@ pub fn fetch_download(
             return fetch_series(agent, def, start).map(|o| (vec![(*id, o)], Vec::new()));
         }
     }
+    // Groupe trimestriel (PIB) : la période commence au début du trimestre.
+    let quarterly = download
+        .series
+        .iter()
+        .any(|(id, _)| series_info(id).is_some_and(|i| i.frequency == Frequency::Quarterly));
+    let start = if quarterly {
+        request_start(start, Frequency::Quarterly)
+    } else {
+        start
+    };
     let keys: Vec<String> = download.series.iter().map(|(_, key)| key.clone()).collect();
     let key =
         combined_key(&keys).ok_or_else(|| format!("clés incompatibles ({})", download.name))?;
@@ -681,6 +752,7 @@ pub fn fetch_series(
         def.flow, def.key
     );
 
+    let start = request_start(start, def.frequency);
     let mut observations = get(agent, &format!("{base}&startPeriod={start}"))?
         .ok_or_else(|| format!("série {} introuvable", def.full_key()))?;
 
@@ -779,7 +851,7 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), total);
-        assert_eq!(total, 30 + 4 * 8);
+        assert_eq!(total, 32 + 6 * 8);
         // Chaque indicateur par pays a sa série zone euro, de même fréquence.
         for def in &BY_COUNTRY {
             let euro = SERIES.iter().find(|s| s.id == def.base).unwrap();
@@ -822,10 +894,32 @@ mod tests {
     }
 
     #[test]
+    fn debut_de_periode_aligne_sur_le_trimestre() {
+        let day = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        assert_eq!(
+            request_start(day("2026-08-27"), Frequency::Quarterly),
+            day("2026-07-01")
+        );
+        assert_eq!(
+            request_start(day("2026-12-31"), Frequency::Quarterly),
+            day("2026-10-01")
+        );
+        assert_eq!(
+            request_start(day("2026-01-01"), Frequency::Quarterly),
+            day("2026-01-01")
+        );
+        assert_eq!(
+            request_start(day("2026-08-27"), Frequency::Monthly),
+            day("2026-08-27")
+        );
+    }
+
+    #[test]
     fn requetes_groupees() {
         let plan = downloads();
-        // 5 séries seules + 7 groupes (inflation, sous-jacente, services, chômage — zone euro
-        // et pays —, taux par pays, courbe, crédit) = 12 requêtes.
+        // 5 séries seules + 10 groupes (inflation, sous-jacente, services, chômage — zone euro
+        // et pays —, PIB zone euro, taux par pays, courbe, crédit, PIB des pays sur 1 trimestre
+        // et sur 1 an) = 15 requêtes.
         let names: Vec<_> = plan.iter().map(|d| d.name).collect();
         assert_eq!(
             names,
@@ -835,18 +929,21 @@ mod tests {
                 "core_inflation",
                 "services_inflation",
                 "unemployment",
+                "gdp",
                 "estr",
                 "yield_10y",
                 "yields",
                 "curve",
                 "eurusd",
                 "m3",
-                "loans"
+                "loans",
+                "gdp_qoq_countries",
+                "gdp_yoy_countries"
             ]
         );
         // Toutes les séries une seule fois, et chaque groupe forme une clé valide.
         let total: usize = plan.iter().map(|d| d.series.len()).sum();
-        assert_eq!(total, SERIES.len() + 4 * 8);
+        assert_eq!(total, SERIES.len() + BY_COUNTRY.len() * 8);
         for download in &plan {
             let keys: Vec<String> = download.series.iter().map(|(_, k)| k.clone()).collect();
             assert!(

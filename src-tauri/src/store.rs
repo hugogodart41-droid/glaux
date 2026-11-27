@@ -123,7 +123,8 @@ const DERIVED: [(&str, Frequency); 9] = [
 
 /// Lignes ajoutées en V3, masquées tant que l'utilisateur ne les affiche pas
 /// (écran « Indicateurs affichés ») : le panneau garde sa taille habituelle.
-const DEFAULT_HIDDEN: [&str; 5] = [
+const DEFAULT_HIDDEN: [&str; 6] = [
+    "gdp_yoy",
     "core_inflation",
     "services_inflation",
     "m3",
@@ -1312,6 +1313,8 @@ mod tests {
                 "core_inflation",
                 "services_inflation",
                 "unemployment",
+                "gdp_qoq",
+                "gdp_yoy",
                 "yields",
                 // Calculés par Glaux
                 "real_rate",
@@ -1321,8 +1324,8 @@ mod tests {
         );
         let rows = arrange_rows(&[], &[], &[]);
         assert_eq!(ids(&rows), default_rows());
-        // Affichées par défaut : les 9 lignes de la v0.2, les taux par pays et la courbe ;
-        // 5 nouvelles masquées.
+        // Affichées par défaut : les 9 lignes de la v0.2, les taux par pays, la courbe et le PIB
+        // sur 1 trimestre ; 6 masquées (dont le PIB sur 1 an).
         let visible: Vec<_> = rows.iter().filter(|r| !r.hidden).map(|r| r.id).collect();
         assert_eq!(
             visible,
@@ -1334,6 +1337,7 @@ mod tests {
                 "eurusd",
                 "hicp",
                 "unemployment",
+                "gdp_qoq",
                 "yields",
                 "real_rate",
                 "slope",
@@ -1346,6 +1350,7 @@ mod tests {
         assert_eq!(section("m3"), Section::Euro);
         assert_eq!(section("hicp"), Section::Country);
         assert_eq!(section("unemployment"), Section::Country);
+        assert_eq!(section("gdp_qoq"), Section::Country); // PIB : zone euro ou pays au choix
         assert_eq!(section("yields"), Section::Country);
         assert_eq!(section("real_rate"), Section::Derived); // calculé avec l'inflation zone euro
         assert_eq!(section("spreads"), Section::Derived);
@@ -1376,6 +1381,8 @@ mod tests {
                 "core_inflation",
                 "services_inflation",
                 "unemployment",
+                "gdp_qoq",
+                "gdp_yoy",
                 "yields",
                 "spreads", // les calculés restent en dernier
                 "slope",
@@ -1389,7 +1396,7 @@ mod tests {
         let all = strings(&default_rows());
         // Tout masqué (fichier abîmé) : retour à l'affichage par défaut.
         let rows = arrange_rows(&[], &all, &[]);
-        assert_eq!(rows.iter().filter(|row| !row.hidden).count(), 11);
+        assert_eq!(rows.iter().filter(|row| !row.hidden).count(), 12);
         let dir = temp_dir("tout-masque");
         let store = Store::load(dir.clone(), Lang::Fr);
         assert!(store.set_layout(&[], &all).is_err());
@@ -1409,7 +1416,7 @@ mod tests {
         let reopened = Store::load(dir.clone(), Lang::Fr);
         let rows = reopened.rows();
         assert_eq!(&ids(&rows)[..2], ["eurusd", "deposit_rate"]);
-        assert_eq!(rows[13].id, "spreads");
+        assert_eq!(rows[15].id, "spreads");
         // Masquées : celles choisies ; les 5 nouvelles sont affichées (absentes de `hidden`).
         let hidden: Vec<_> = rows.iter().filter(|r| r.hidden).map(|r| r.id).collect();
         assert_eq!(hidden, ["unemployment", "slope"]);

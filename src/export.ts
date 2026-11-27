@@ -17,6 +17,7 @@ import {
   formatDataDate,
   formatFullPeriod,
   formatValue,
+  isQuarter,
   parsePeriod,
   shortChange,
   shortUnit,
@@ -243,7 +244,13 @@ function drawChartBlock(
     .flatMap((s) => s.points.slice(0, 1).map((p) => p.date))
     .sort()[0];
   const first = firstDate ? parsePeriod(firstDate) : null;
-  const since = first ? new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(first) : "";
+  // Série trimestrielle (PIB) : « depuis T3 2025 » plutôt que le premier mois du trimestre.
+  const since =
+    firstDate && isQuarter(firstDate)
+      ? formatFullPeriod(firstDate, true)
+      : first
+        ? new Intl.DateTimeFormat(locale(), { month: "long", year: "numeric" }).format(first)
+        : "";
   const label = t().overYears(Math.max(1, Math.round(months / 12)));
   const notePart = note ? `  ·  ${note}` : "";
   ctx.fillText(`${label.toUpperCase()}${since ? `  ·  ${t().sinceMonth(since)}` : ""}${notePart}`, period.x, period.y);

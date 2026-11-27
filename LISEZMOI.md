@@ -19,7 +19,7 @@ Le premier lancement compile Rust : compte 3 à 5 minutes. Les suivants prennent
 ```bash
 cd src-tauri
 cargo test                          # calculs et lecture des CSV (hors ligne)
-cargo test -- --ignored --nocapture # téléchargement réel des 62 séries BCE (Internet)
+cargo test -- --ignored --nocapture # téléchargement réel des 80 séries BCE (Internet)
 ```
 
 ## Données
@@ -38,6 +38,13 @@ Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes
 - Taux à 10 ans par pays (V3) : une ligne (« groupe » `yields`) pour 3 pays au plus, choisis par l'utilisateur
   (Allemagne, France, Italie par défaut), en %, variation en points ; juste après « Taux souverain 10 ans »
   (moyenne quotidienne de la zone euro), courbes superposées en vue détail et à l'export.
+- PIB (v0.6) : croissance en volume sur 1 trimestre (`gdp_qoq`, affichée) et sur 1 an (`gdp_yoy`, masquée par
+  défaut), jeu `MNA` (comptes nationaux d'Eurostat), CVS-CJO, zone euro ou un des 8 pays. **Trimestriel** :
+  dates « 2026-Q3 » (`Frequency::Quarterly` dans `data.rs`), affichées « T3 2026 » / « Q3 2026 », variation
+  « sur 1 trimestre ». Zone euro = `I10` (21 pays à composition fixe, Bulgarie comprise depuis le 1er janvier
+  2026 : `I9` s'arrête au 1er trimestre 2026), unité `EUR` ; pays : unité `XDC` (la série `EUR` n'existe pas en
+  croissance). Les deux clés diffèrent sur deux dimensions : 3 requêtes (zone euro ; pays sur 1 trimestre ;
+  pays sur 1 an, `download_group` dans `ecb.rs`).
 - Depuis la V3 : inflation sous-jacente et des services (jeu `HICP`), M3, crédit aux entreprises et aux ménages
   (jeu `BSI`, croissance sur 1 an, publiée vers la fin du mois suivant). Masqués par défaut (`DEFAULT_HIDDEN`).
 
@@ -55,7 +62,7 @@ Calculés par Glaux (`src-tauri/src/store.rs`, à la demande, rien de plus en ca
 - À ne pas confondre : « Taux souverain 10 ans » (`yield_10y`) = échantillon `G_N_C`, toutes notations (taux
   moyen de la zone euro, plus élevé que le 10 ans AAA : 3,93 % contre 3,31 % le 24/11/2026).
 Quand une nouvelle version suit une série de plus, elle est téléchargée au lancement sans attendre les 6 h.
-Téléchargement : 62 séries en 12 requêtes (`ecb::downloads`), 4 à la fois (`PARALLEL_DOWNLOADS`). La BCE met
+Téléchargement : 80 séries en 15 requêtes (`ecb::downloads`), 4 à la fois (`PARALLEL_DOWNLOADS`). La BCE met
 ~2 s à répondre quelle que soit la taille : les séries dont les clés ne diffèrent que par une dimension partent
 ensemble (`combined_key` : « HICP.M.U2+DE+FR+….N.000000.4D0.ANR », courbe « …SR_3M+SR_6M+… », taux par pays,
 crédit) ; la réponse est triée par la colonne `KEY`. Le taux de dépôt reste seul (requête de la valeur d'avant).
@@ -105,7 +112,7 @@ Icône « document » dans l'en-tête (ou ⌘N) : écran « Note macro · {mois}
   différents : inflation d'octobre, chômage de septembre…) ; une donnée absente supprime sa phrase.
 - 4 rubriques : Prix (inflation totale, sous-jacente, services, écart entre pays, prochaine inflation flash) ;
   Taux et politique monétaire (taux de dépôt, €STR, taux directeur réel, pente 2-10 ans, prochaine décision BCE) ;
-  Emploi, crédit et monnaie (chômage, écart entre pays, M3, crédit aux entreprises et aux ménages) ;
+  Croissance, emploi et crédit (PIB sur 1 trimestre et sur 1 an, écart entre pays, chômage, M3, crédit) ;
   Marchés (taux souverain 10 ans, écarts avec l'Allemagne des 7 pays, écart France, EUR/USD).
 - Règles : variation sur un mois comparée à la précision affichée (« stable » si les deux valeurs s'affichent pareil) ;
   « plus haut / plus bas niveau depuis … » si la valeur n'avait pas été atteinte depuis au moins 12 mois ; taux de
@@ -126,6 +133,8 @@ construit côté Rust à partir du cache (`src-tauri/src/excel.rs`, crate `rust_
 - « Mensuel » : inflation (totale, sous-jacente, services), chômage, M3, crédit, taux réel, taux 10 ans des 8 pays,
   écarts avec l'Allemagne des 7 pays (pb), quel que soit l'affichage choisi dans le panneau.
 - « Par pays » : inflation (totale, sous-jacente, services) et chômage des 8 pays (32 colonnes).
+- « Trimestriel » : croissance du PIB sur 1 trimestre et sur 1 an, zone euro puis 8 pays (18 colonnes) ; dates en
+  texte « 2026-T3 » (une date Excel afficherait le premier mois du trimestre).
 - « Courbe des taux » : taux quotidiens de chaque échéance, de 3 mois à 30 ans.
 - « Sources » : clé BCE ou calcul de chaque colonne, unité, date du dernier téléchargement.
 Vraies dates Excel, formats de nombre par unité, en-tête figé, filtres ; titres dans la langue de Glaux.
@@ -136,7 +145,7 @@ Icône « réglages » dans l'en-tête (ou ⌘,) : écran « Indicateurs affich�
 - Clic sur une ligne (ou Espace) : l'afficher ou la masquer. Le dernier indicateur affiché ne se masque pas.
 - Trois rubriques, dans cet ordre (`Section` dans `store.rs`) : « Zone euro » (taux de la BCE, €STR, taux
   souverain 10 ans, courbe AAA, EUR/USD, M3, crédit), « Zone euro ou par pays » (inflation, sous-jacente,
-  services, chômage, taux 10 ans par pays), « Calculés par Glaux ».
+  services, chômage, PIB sur 1 trimestre et sur 1 an, taux 10 ans par pays), « Calculés par Glaux ».
 - Glisser une ligne (ou ↑ ↓ au clavier) : changer l'ordre, à l'intérieur de sa rubrique. Les séries de la BCE
   restent avant les indicateurs calculés par Glaux, pour ne pas mélanger données officielles et calculs.
 - Lignes masquées par défaut (`DEFAULT_HIDDEN` dans `store.rs`) : prefs.json ne retient que l'écart avec
@@ -268,4 +277,5 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 10. V3 : plus de données BCE, courbe des taux AAA, panneau agrandi, rubriques et indicateurs par pays (v0.3.0),
     carrousel LinkedIn, fiabilité (DMG universel, calendrier publié, clic sur notification, mises à jour
     toutes les 6 h, actualisation 2,5 fois plus rapide) (v0.4.0)
-11. Note macro mensuelle : faits du mois, analyse, post LinkedIn, PDF 4:5 ← **ici** (v0.5.0 à publier)
+11. Note macro mensuelle : faits du mois, analyse, post LinkedIn, PDF 4:5 (v0.5.0)
+12. PIB par pays : première série trimestrielle (zone euro à 21 + 8 pays) ← **ici** (v0.6.0 à publier)

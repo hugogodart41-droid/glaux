@@ -109,6 +109,10 @@ const fr = {
   points: (n: string) => `${n}${NNBSP}pt`,
   change: (text: string) => `${text} sur 1 mois`,
   stable: "stable sur 1 mois",
+  changeQuarter: (text: string) => `${text} sur 1 trimestre`,
+  stableQuarter: "stable sur 1 trimestre",
+  /** Trimestre : « T3 2026 ». */
+  quarter: (q: number, year: number) => `T${q} ${year}`,
   since: (date: string) => `depuis le ${date}`,
 
   // Vue détail
@@ -159,7 +163,8 @@ const fr = {
     `Données : Banque centrale européenne, API publique (data.ecb.europa.eu), téléchargées le ${downloaded}.`,
   endComputed:
     "Calculés par Glaux : taux directeur réel = taux de dépôt − inflation ; pente 2-10 ans = taux AAA à 10 ans − taux AAA à 2 ans ; écarts = taux à 10 ans du pays − taux allemand.",
-  endMonthly: "Par pays : chiffres mensuels ; taux à 10 ans en moyenne du mois (statistiques de convergence).",
+  endMonthly:
+    "Par pays : chiffres mensuels (PIB : trimestriels) ; taux à 10 ans en moyenne du mois (statistiques de convergence).",
   endDisclaimer: "Ces chiffres informent ; ils ne constituent pas un conseil en investissement.",
   endTagline: "Tableau de bord macro de la zone euro",
   endLink: "Mac et Windows · github.com/hugogodart41-droid/glaux",
@@ -212,6 +217,7 @@ const fr = {
   // Image exportée
   effectiveSince: (date: string) => `en vigueur depuis le ${date}`,
   dataOf: (date: string, monthly: boolean) => (monthly ? `donnée ${deMois(date)}` : `donnée du ${date}`),
+  dataOfQuarter: (quarter: string) => `donnée du ${quarter}`,
   overYears: (years: number) => (years > 1 ? `Sur ${years} ans` : "Sur 1 an"),
   sinceMonth: (date: string) => `depuis ${date}`,
   source: "Source : Banque centrale européenne (BCE)",
@@ -282,6 +288,9 @@ const en: Strings = {
   points: (n) => `${n} pp`,
   change: (text) => `${text} over 1 month`,
   stable: "unchanged over 1 month",
+  changeQuarter: (text) => `${text} over 1 quarter`,
+  stableQuarter: "unchanged over 1 quarter",
+  quarter: (q, year) => `Q${q} ${year}`,
   since: (date) => `since ${date}`,
 
   back: "‹ Indicators",
@@ -329,7 +338,8 @@ const en: Strings = {
     `Data: European Central Bank, public API (data.ecb.europa.eu), downloaded on ${downloaded}.`,
   endComputed:
     "Computed by Glaux: real policy rate = deposit rate − inflation; 2-10Y slope = AAA 10-year yield − AAA 2-year yield; spreads = country 10-year yield − German yield.",
-  endMonthly: "By country: monthly figures; 10-year yields as monthly averages (convergence statistics).",
+  endMonthly:
+    "By country: monthly figures (GDP: quarterly); 10-year yields as monthly averages (convergence statistics).",
   endDisclaimer: "These figures are for information only; they are not investment advice.",
   endTagline: "Euro area macro dashboard",
   endLink: "Mac and Windows · github.com/hugogodart41-droid/glaux",
@@ -376,6 +386,7 @@ const en: Strings = {
 
   effectiveSince: (date) => `effective since ${date}`,
   dataOf: (date) => `data for ${date}`,
+  dataOfQuarter: (quarter) => `data for ${quarter}`,
   overYears: (years) => (years > 1 ? `Over ${years} years` : "Over 1 year"),
   sinceMonth: (date) => `since ${date}`,
   source: "Source: European Central Bank (ECB)",

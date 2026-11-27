@@ -115,6 +115,26 @@ fn full_date(date: NaiveDate, lang: Lang) -> String {
     format!("{day}\u{a0}{}", month_year(date, lang))
 }
 
+/// « 3e trimestre 2026 », « 1er trimestre 2026 » / « Q3 2026 » (`date` : 1er jour du trimestre).
+fn quarter_label(date: NaiveDate, lang: Lang) -> String {
+    let quarter = date.month().div_ceil(3);
+    match (lang, quarter) {
+        (Lang::Fr, 1) => format!("1er\u{a0}trimestre {}", date.year()),
+        (Lang::Fr, q) => format!("{q}e\u{a0}trimestre {}", date.year()),
+        (Lang::En, q) => format!("Q{q} {}", date.year()),
+    }
+}
+
+/// « en octobre 2026 » / « au 3e trimestre 2026 » ; « in October 2026 » / « in Q3 2026 ».
+fn period_in(date: NaiveDate, quarterly: bool, lang: Lang) -> String {
+    match (lang, quarterly) {
+        (Lang::Fr, false) => format!("en {}", month_year(date, lang)),
+        (Lang::Fr, true) => format!("au {}", quarter_label(date, lang)),
+        (Lang::En, false) => format!("in {}", month_year(date, lang)),
+        (Lang::En, true) => format!("in {}", quarter_label(date, lang)),
+    }
+}
+
 /// Nombre de mois entre deux dates (mois calendaires).
 fn months_between(from: NaiveDate, to: NaiveDate) -> i32 {
     (to.year() - from.year()) * 12 + to.month() as i32 - from.month() as i32
@@ -559,6 +579,68 @@ fn eurusd_fact(observations: &[Observation], lang: Lang) -> Option<(NoteFigure, 
     Some((figure, sentence))
 }
 
+/// PIB de la zone euro : croissance sur 1 trimestre (chiffre phare d'Eurostat), comparée au
+/// trimestre précédent, et croissance sur 1 an du même trimestre.
+fn gdp_fact(qoq: &[Observation], yoy: &[Observation], lang: Lang) -> Option<(NoteFigure, String)> {
+    let (date, value) = last_dated(qoq)?;
+    let shown = pct(value, 1, true, lang);
+    let when = quarter_label(date, lang);
+    let within = period_in(date, true, lang);
+    let before = qoq
+        .iter()
+        .rev()
+        .nth(1)
+        .filter(|o| parse_period(&o.date) == date.checked_sub_months(Months::new(3)));
+    let previous = before
+        .and_then(|o| Some((parse_period(&o.date)?, o.value)))
+        .map(|(d, v)| {
+            let short = lang.pick(
+                quarter_label(d, lang).replace(&format!(" {}", d.year()), ""),
+                format!("Q{}", d.month().div_ceil(3)),
+            );
+            let short = if d.year() == date.year() {
+                short
+            } else {
+                quarter_label(d, lang)
+            };
+            lang.pick(
+                format!(" (après {} au {short})", pct(v, 1, true, lang)),
+                format!(" (after {} in {short})", pct(v, 1, true, lang)),
+            )
+        })
+        .unwrap_or_default();
+    // Sur 1 an : seulement pour le même trimestre.
+    let annual = yoy
+        .iter()
+        .rev()
+        .find(|o| parse_period(&o.date) == Some(date))
+        .map(|o| pct(o.value, 1, true, lang));
+    let annual_text = annual
+        .as_ref()
+        .map(|a| lang.pick(format!(" ; sur 1 an : {a}"), format!("; year on year: {a}")))
+        .unwrap_or_default();
+    let size = pct(value.abs(), 1, false, lang);
+    let verb = match rounded(value, 1) {
+        v if v > 0.0 => lang.pick(format!("a progressé de {size}"), format!("grew by {size}")),
+        v if v < 0.0 => lang.pick(
+            format!("a reculé de {size}"),
+            format!("contracted by {size}"),
+        ),
+        _ => lang.pick("a stagné".to_string(), "was flat".to_string()),
+    };
+    let sentence = lang.pick(
+        format!("Le PIB de la zone euro {verb} {within} par rapport au trimestre précédent{previous}{annual_text}."),
+        format!("Euro area GDP {verb} {within} from the previous quarter{previous}{annual_text}."),
+    );
+    let figure = NoteFigure {
+        label: lang.pick("PIB (sur 1 trimestre)", "GDP (q/q)").to_string(),
+        value: shown,
+        date: when,
+        change: annual.map(|a| lang.pick(format!("{a} sur 1 an"), format!("{a} year on year"))),
+    };
+    Some((figure, sentence))
+}
+
 /// Nom d'un pays (code de `COUNTRIES`).
 fn country_name(code: &str, lang: Lang) -> &'static str {
     let names: [(&str, &str, &str); 8] = [
@@ -601,32 +683,44 @@ fn country_range(
     base: &str,
     what: (&str, &str),
     decimals: usize,
+    signed: bool,
     lang: Lang,
 ) -> Option<String> {
-    let (month, _) = last_dated(&get(base))?;
+    let euro_area = get(base);
+    let quarterly = euro_area.last()?.date.contains("-Q");
+    let (month, _) = last_dated(&euro_area)?;
     let values = country_values(get, base, month);
     let (low, high) = (values.first()?, values.last()?);
     if values.len() < 2 {
         return None;
     }
     let n = values.len();
-    let when = month_year(month, lang);
+    let when = if quarterly {
+        quarter_label(month, lang)
+    } else {
+        month_year(month, lang)
+    };
+    let within = period_in(month, quarterly, lang);
+    // « d'octobre 2026 », « du 3e trimestre 2026 ».
+    let of_when = if quarterly {
+        format!("du {when}")
+    } else {
+        format!("{} {}", fr_of_month(month.month()), month.year())
+    };
     let (lo, hi) = (
-        pct(low.1, decimals, false, lang),
-        pct(high.1, decimals, false, lang),
+        pct(low.1, decimals, signed, lang),
+        pct(high.1, decimals, signed, lang),
     );
     let (lo_name, hi_name) = (country_name(low.0, lang), country_name(high.0, lang));
     let what = lang.pick(what.0, what.1);
     // Tous les pays n'ont pas forcément publié le même mois que la zone euro.
     Some(match (lang, n == COUNTRIES.len()) {
-        (Lang::Fr, true) => format!("Parmi les {n} pays suivis, {what} va de {lo} ({lo_name}) à {hi} ({hi_name}) en {when}."),
+        (Lang::Fr, true) => format!("Parmi les {n} pays suivis, {what} va de {lo} ({lo_name}) à {hi} ({hi_name}) {within}."),
         (Lang::Fr, false) => format!(
-            "Parmi les {n} pays suivis dont le chiffre {} {} est publié, {what} va de {lo} ({lo_name}) à {hi} ({hi_name}).",
-            fr_of_month(month.month()),
-            month.year()
+            "Parmi les {n} pays suivis dont le chiffre {of_when} est publié, {what} va de {lo} ({lo_name}) à {hi} ({hi_name})."
         ),
         (Lang::En, true) => format!(
-            "Across the {n} countries tracked, {what} ranged from {lo} ({lo_name}) to {hi} ({hi_name}) in {when}."
+            "Across the {n} countries tracked, {what} ranged from {lo} ({lo_name}) to {hi} ({hi_name}) {within}."
         ),
         (Lang::En, false) => format!(
             "Across the {n} tracked countries with {when} data, {what} ranged from {lo} ({lo_name}) to {hi} ({hi_name})."
@@ -807,6 +901,7 @@ pub fn build(
         "hicp",
         ("l'inflation", "inflation"),
         1,
+        false,
         lang,
     ));
     if let Some(date) = next_date(&calendar.hicp, today) {
@@ -846,11 +941,23 @@ pub fn build(
         ));
     }
 
-    // Emploi, crédit et monnaie.
+    // Croissance, emploi et crédit : PIB d'abord (chiffre vedette de la page du PDF).
     let mut activity = section(
         "activity",
-        lang.pick("Emploi, crédit et monnaie", "Jobs, credit and money"),
+        lang.pick("Croissance, emploi et crédit", "Growth, jobs and credit"),
     );
+    push(
+        &mut activity,
+        gdp_fact(&get("gdp_qoq"), &get("gdp_yoy"), lang),
+    );
+    activity.sentences.extend(country_range(
+        get,
+        "gdp_qoq",
+        ("la croissance sur 1 trimestre", "quarterly growth"),
+        1,
+        true,
+        lang,
+    ));
     let unemployment = monthly_fact(&get("unemployment"), &UNEMPLOYMENT, lang);
     push(&mut activity, unemployment.clone());
     activity.sentences.extend(country_range(
@@ -858,6 +965,7 @@ pub fn build(
         "unemployment",
         ("le taux de chômage", "unemployment"),
         1,
+        false,
         lang,
     ));
     push(&mut activity, monthly_fact(&get("m3"), &M3, lang));
@@ -1148,5 +1256,50 @@ mod tests {
         assert!(note
             .post
             .starts_with("Macro note · November 2026\n\nThis month's figures\n\nSource: ECB"));
+    }
+
+    #[test]
+    fn pib_du_trimestre_et_ecart_entre_pays() {
+        let qoq = obs(&[("2026-Q2", 0.645), ("2026-Q3", 0.412)]);
+        let yoy = obs(&[("2026-Q2", 1.2), ("2026-Q3", 1.297)]);
+        let (figure, sentence) = gdp_fact(&qoq, &yoy, Lang::Fr).unwrap();
+        assert_eq!(
+            sentence,
+            "Le PIB de la zone euro a progressé de 0,4\u{a0}% au 3e\u{a0}trimestre 2026 par rapport au trimestre précédent (après +0,6\u{a0}% au 2e\u{a0}trimestre) ; sur 1 an : +1,3\u{a0}%."
+        );
+        assert_eq!(figure.value, "+0,4\u{a0}%");
+        assert_eq!(figure.date, "3e\u{a0}trimestre 2026");
+        assert_eq!(figure.change.as_deref(), Some("+1,3\u{a0}% sur 1 an"));
+        let (_, english) = gdp_fact(&qoq, &yoy, Lang::En).unwrap();
+        assert_eq!(
+            english,
+            "Euro area GDP grew by 0.4% in Q3 2026 from the previous quarter (after +0.6% in Q2); year on year: +1.3%."
+        );
+        // Recul, premier trimestre, trimestre d'avant l'année précédente.
+        let qoq = obs(&[("2025-Q4", 0.2), ("2026-Q1", -0.13)]);
+        let (_, sentence) = gdp_fact(&qoq, &[], Lang::Fr).unwrap();
+        assert_eq!(
+            sentence,
+            "Le PIB de la zone euro a reculé de 0,1\u{a0}% au 1er\u{a0}trimestre 2026 par rapport au trimestre précédent (après +0,2\u{a0}% au 4e\u{a0}trimestre 2025)."
+        );
+
+        let mut data = HashMap::new();
+        data.insert("gdp_qoq".to_string(), obs(&[("2026-Q3", 0.4)]));
+        data.insert("gdp_qoq_fr".to_string(), obs(&[("2026-Q3", -0.13)]));
+        data.insert("gdp_qoq_es".to_string(), obs(&[("2026-Q3", 0.63)]));
+        data.insert("gdp_qoq_be".to_string(), obs(&[("2026-Q2", 0.14)])); // pas encore publié
+        let get = |id: &str| data.get(id).cloned().unwrap_or_default();
+        let range = country_range(
+            &get,
+            "gdp_qoq",
+            ("la croissance sur 1 trimestre", "quarterly growth"),
+            1,
+            true,
+            Lang::Fr,
+        );
+        assert_eq!(
+            range.as_deref(),
+            Some("Parmi les 2 pays suivis dont le chiffre du 3e\u{a0}trimestre 2026 est publié, la croissance sur 1 trimestre va de \u{2212}0,1\u{a0}% (France) à +0,6\u{a0}% (Espagne).")
+        );
     }
 }

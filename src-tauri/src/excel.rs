@@ -3,6 +3,7 @@
 // - « Quotidien » : taux de dépôt, €STR, taux souverain 10 ans, EUR/USD, pente ;
 // - « Mensuel » : inflation, chômage, taux réel, taux 10 ans par pays, écarts avec l'Allemagne ;
 // - « Par pays » : inflation (totale, sous-jacente, services) et chômage des 8 pays ;
+// - « Trimestriel » : croissance du PIB (sur 1 trimestre, sur 1 an), zone euro et 8 pays ;
 // - « Courbe des taux AAA » : taux de chaque échéance ;
 // - « Sources » : série BCE ou calcul de chaque colonne, unité, date du téléchargement.
 // Vraies dates Excel, formats de nombre par unité, ligne d'en-tête figée et filtres.
@@ -297,6 +298,17 @@ const MONTHLY: [ColumnDef; 23] = [
     ),
 ];
 
+/// Présentation des dates en colonne A.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Dates {
+    /// « 24/11/2026 ».
+    Daily,
+    /// « nov. 2026 ».
+    Monthly,
+    /// « 2026-T3 » / « 2026-Q3 » (texte : une date Excel afficherait le premier mois).
+    Quarterly,
+}
+
 /// Une feuille de données : dates (lignes) × colonnes, valeurs dans l'unité affichée.
 #[derive(Debug, PartialEq)]
 struct Table {
@@ -385,10 +397,13 @@ fn write_table(
     defs: &[ColumnDef],
     table: &Table,
     lang: Lang,
-    monthly: bool,
+    dates: Dates,
 ) -> Result<(), XlsxError> {
     let header = header_format();
-    let date_format = Format::new().set_num_format(if monthly { "mmm yyyy" } else { "dd/mm/yyyy" });
+    let date_format = Format::new().set_num_format(match dates {
+        Dates::Daily => "dd/mm/yyyy",
+        _ => "mmm yyyy",
+    });
 
     sheet.write_string_with_format(0, 0, lang.pick("Date", "Date"), &header)?;
     for (c, def) in defs.iter().enumerate() {
@@ -402,7 +417,17 @@ fn write_table(
     let formats: Vec<Format> = defs.iter().map(|d| number_format(d.decimals)).collect();
     for (r, date) in table.dates.iter().enumerate() {
         let row = (r + 1) as u32;
-        sheet.write_datetime_with_format(row, 0, excel_date(*date)?, &date_format)?;
+        if dates == Dates::Quarterly {
+            let quarter = format!(
+                "{}-{}{}",
+                date.year(),
+                lang.pick("T", "Q"),
+                date.month().div_ceil(3)
+            );
+            sheet.write_string(row, 0, quarter)?;
+        } else {
+            sheet.write_datetime_with_format(row, 0, excel_date(*date)?, &date_format)?;
+        }
         for (c, column) in table.values.iter().enumerate() {
             if let Some(value) = column[r] {
                 sheet.write_number_with_format(row, (c + 1) as u16, value, &formats[c])?;
@@ -454,6 +479,7 @@ fn write_sources(
         (lang.pick("Quotidien", "Daily"), &DAILY[..]),
         (lang.pick("Mensuel", "Monthly"), &MONTHLY[..]),
         (lang.pick("Par pays", "By country"), &BY_COUNTRY_COLUMNS[..]),
+        (lang.pick("Trimestriel", "Quarterly"), &QUARTERLY[..]),
         (
             lang.pick("Courbe des taux AAA", "AAA yield curve"),
             &CURVE_COLUMNS[..],
@@ -489,6 +515,137 @@ fn write_sources(
     sheet.set_column_width(3, 20)?;
     Ok(())
 }
+
+/// Feuille « Trimestriel » : croissance du PIB en volume (sur 1 trimestre et sur 1 an), zone
+/// euro puis chaque pays de `COUNTRIES` (ecb.rs).
+const QUARTERLY: [ColumnDef; 18] = [
+    col(
+        "gdp_qoq",
+        "PIB, croissance sur 1 trimestre, zone euro (%)",
+        "GDP, quarter-on-quarter growth, euro area (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_de",
+        "PIB, croissance sur 1 trimestre, Allemagne (%)",
+        "GDP, quarter-on-quarter growth, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_fr",
+        "PIB, croissance sur 1 trimestre, France (%)",
+        "GDP, quarter-on-quarter growth, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_it",
+        "PIB, croissance sur 1 trimestre, Italie (%)",
+        "GDP, quarter-on-quarter growth, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_es",
+        "PIB, croissance sur 1 trimestre, Espagne (%)",
+        "GDP, quarter-on-quarter growth, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_gr",
+        "PIB, croissance sur 1 trimestre, Grèce (%)",
+        "GDP, quarter-on-quarter growth, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_pt",
+        "PIB, croissance sur 1 trimestre, Portugal (%)",
+        "GDP, quarter-on-quarter growth, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_be",
+        "PIB, croissance sur 1 trimestre, Belgique (%)",
+        "GDP, quarter-on-quarter growth, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_qoq_nl",
+        "PIB, croissance sur 1 trimestre, Pays-Bas (%)",
+        "GDP, quarter-on-quarter growth, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy",
+        "PIB, croissance sur 1 an, zone euro (%)",
+        "GDP, year-on-year growth, euro area (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_de",
+        "PIB, croissance sur 1 an, Allemagne (%)",
+        "GDP, year-on-year growth, Germany (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_fr",
+        "PIB, croissance sur 1 an, France (%)",
+        "GDP, year-on-year growth, France (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_it",
+        "PIB, croissance sur 1 an, Italie (%)",
+        "GDP, year-on-year growth, Italy (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_es",
+        "PIB, croissance sur 1 an, Espagne (%)",
+        "GDP, year-on-year growth, Spain (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_gr",
+        "PIB, croissance sur 1 an, Grèce (%)",
+        "GDP, year-on-year growth, Greece (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_pt",
+        "PIB, croissance sur 1 an, Portugal (%)",
+        "GDP, year-on-year growth, Portugal (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_be",
+        "PIB, croissance sur 1 an, Belgique (%)",
+        "GDP, year-on-year growth, Belgium (%)",
+        Unit::Percent,
+        1,
+    ),
+    col(
+        "gdp_yoy_nl",
+        "PIB, croissance sur 1 an, Pays-Bas (%)",
+        "GDP, year-on-year growth, Netherlands (%)",
+        Unit::Percent,
+        1,
+    ),
+];
 
 /// Feuille « Courbe des taux AAA » : taux zéro coupon des États notés AAA par échéance (quotidien),
 /// dans l'ordre de `CURVE` (store.rs).
@@ -749,22 +906,33 @@ pub fn build_workbook(
         let monthly = build_table(&MONTHLY, series);
         let curve = build_table(&CURVE_COLUMNS, series);
         let by_country = build_table(&BY_COUNTRY_COLUMNS, series);
+        let quarterly = build_table(&QUARTERLY, series);
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Quotidien", "Daily"))?;
-        write_table(sheet, &DAILY, &daily, lang, false)?;
+        write_table(sheet, &DAILY, &daily, lang, Dates::Daily)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Mensuel", "Monthly"))?;
-        write_table(sheet, &MONTHLY, &monthly, lang, true)?;
+        write_table(sheet, &MONTHLY, &monthly, lang, Dates::Monthly)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Par pays", "By country"))?;
-        write_table(sheet, &BY_COUNTRY_COLUMNS, &by_country, lang, true)?;
+        write_table(
+            sheet,
+            &BY_COUNTRY_COLUMNS,
+            &by_country,
+            lang,
+            Dates::Monthly,
+        )?;
+
+        let sheet = workbook.add_worksheet();
+        sheet.set_name(lang.pick("Trimestriel", "Quarterly"))?;
+        write_table(sheet, &QUARTERLY, &quarterly, lang, Dates::Quarterly)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name(lang.pick("Courbe des taux AAA", "AAA yield curve"))?;
-        write_table(sheet, &CURVE_COLUMNS, &curve, lang, false)?;
+        write_table(sheet, &CURVE_COLUMNS, &curve, lang, Dates::Daily)?;
 
         let sheet = workbook.add_worksheet();
         sheet.set_name("Sources")?;
@@ -839,6 +1007,20 @@ mod tests {
     }
 
     #[test]
+    fn trimestres_dates_et_valeurs() {
+        let data = [
+            series("gdp_qoq", false, &[("2026-Q2", 0.64), ("2026-Q3", 0.41)]),
+            series("gdp_yoy_fr", false, &[("2026-Q3", -0.07)]),
+        ];
+        let table = build_table(&QUARTERLY, &data);
+        assert_eq!(table.dates, vec![day("2026-04-01"), day("2026-07-01")]);
+        assert_eq!(table.values[0], vec![Some(0.64), Some(0.41)]);
+        let fr = QUARTERLY.iter().position(|c| c.id == "gdp_yoy_fr").unwrap();
+        assert_eq!(table.values[fr], vec![None, Some(-0.07)]);
+        assert!(build_workbook(&data, Lang::En, "27/11/2026", "0.6.0").is_ok());
+    }
+
+    #[test]
     fn classeur_xlsx_valide_dans_les_deux_langues() {
         let data = [
             series("deposit_rate", true, &[("2026-09-16", 2.5)]),
@@ -848,13 +1030,21 @@ mod tests {
             let bytes = build_workbook(&data, lang, "25/11/2026 14:58", "0.2.0").unwrap();
             assert!(bytes.starts_with(b"PK")); // un .xlsx est une archive zip
         }
-        // Une colonne par pays et par indicateur, dans l'ordre de COUNTRIES (ecb.rs).
+        // Une colonne par pays et par indicateur mensuel, dans l'ordre de COUNTRIES (ecb.rs) ;
+        // le PIB (trimestriel) a sa feuille, zone euro puis pays.
         let ids: Vec<_> = BY_COUNTRY_COLUMNS.iter().map(|c| c.id).collect();
-        let expected: Vec<_> = crate::ecb::BY_COUNTRY
-            .iter()
-            .flat_map(|def| def.ids)
-            .collect();
+        let monthly = |quarterly: bool| {
+            crate::ecb::BY_COUNTRY.iter().filter(move |def| {
+                (def.frequency == crate::data::Frequency::Quarterly) == quarterly
+            })
+        };
+        let expected: Vec<_> = monthly(false).flat_map(|def| def.ids).collect();
         assert_eq!(ids, expected);
+        let quarterly: Vec<_> = QUARTERLY.iter().map(|c| c.id).collect();
+        let expected: Vec<_> = monthly(true)
+            .flat_map(|def| std::iter::once(def.base).chain(def.ids))
+            .collect();
+        assert_eq!(quarterly, expected);
         // Classeur vide (premier lancement hors ligne) : fichier valide quand même.
         assert!(build_workbook(&[], Lang::Fr, "—", "0.2.0").is_ok());
     }

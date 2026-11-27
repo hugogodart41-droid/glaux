@@ -40,6 +40,9 @@ const FORMATS: Record<string, Format> = {
   yield_nl: { kind: "rate", decimals: 2, monthly: true },
   eurusd: { kind: "fx", decimals: 4, monthly: false },
   unemployment: { kind: "rate", decimals: 1, monthly: true },
+  // Trimestriel : dates « 2026-Q3 », affichées « T3 2026 » (format.ts).
+  gdp_qoq: { kind: "rate", decimals: 1, monthly: true },
+  gdp_yoy: { kind: "rate", decimals: 1, monthly: true },
   // V3 : masqués par défaut (à afficher dans « Indicateurs affichés »).
   core_inflation: { kind: "rate", decimals: 1, monthly: true },
   services_inflation: { kind: "rate", decimals: 1, monthly: true },
@@ -96,6 +99,18 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       hint: "Taux de chômage, zone euro, 15-74 ans, corrigé des variations saisonnières.",
       explanation:
         "Part des actifs sans emploi. Un chômage bas signale un marché du travail tendu, qui peut pousser les salaires, puis les prix, à la hausse.",
+    },
+    gdp_qoq: {
+      label: "PIB (sur 1 trimestre)",
+      hint: "PIB en volume, zone euro, croissance par rapport au trimestre précédent (Eurostat, CVS).",
+      explanation:
+        "La croissance de l'économie d'un trimestre à l'autre : le chiffre phare d'Eurostat. Deux trimestres de recul d'affilée signalent souvent une récession.",
+    },
+    gdp_yoy: {
+      label: "PIB (sur 1 an)",
+      hint: "PIB en volume, zone euro, croissance par rapport au même trimestre un an plus tôt (CVS).",
+      explanation:
+        "La croissance sur douze mois, moins heurtée que d'un trimestre à l'autre. Elle se compare directement à l'inflation et aux salaires.",
     },
     core_inflation: {
       label: "Inflation sous-jacente",
@@ -253,6 +268,18 @@ const TEXTS: Record<Lang, Record<string, Texts>> = {
       explanation:
         "Share of the labour force without a job. Low unemployment signals a tight labour market, which can push wages, then prices, higher.",
     },
+    gdp_qoq: {
+      label: "GDP (q/q)",
+      hint: "Real GDP, euro area, growth on the previous quarter (Eurostat, seasonally adjusted).",
+      explanation:
+        "How fast the economy grew from one quarter to the next: Eurostat's headline figure. Two quarters of decline in a row often signal a recession.",
+    },
+    gdp_yoy: {
+      label: "GDP (y/y)",
+      hint: "Real GDP, euro area, growth on the same quarter a year earlier (seasonally adjusted).",
+      explanation:
+        "Growth over twelve months, smoother than quarter on quarter. It compares directly with inflation and wages.",
+    },
     core_inflation: {
       label: "Core inflation",
       hint: "HICP excluding energy, food, alcohol and tobacco, euro area, annual rate.",
@@ -389,7 +416,7 @@ export function displayFor(id: string): Display | undefined {
 export const COUNTRY_CODES = ["de", "fr", "it", "es", "gr", "pt", "be", "nl"];
 
 /** Lignes du panneau disponibles par pays (même liste que BY_COUNTRY dans ecb.rs). */
-const COUNTRY_ROWS = ["hicp", "core_inflation", "services_inflation", "unemployment"];
+const COUNTRY_ROWS = ["hicp", "core_inflation", "services_inflation", "unemployment", "gdp_qoq", "gdp_yoy"];
 
 const COUNTRY_NAMES: Record<Lang, Record<string, string>> = {
   fr: {
@@ -414,7 +441,7 @@ const COUNTRY_NAMES: Record<Lang, Record<string, string>> = {
   },
 };
 
-/** Vrai pour une ligne qu'on peut afficher par pays (inflation, chômage). */
+/** Vrai pour une ligne qu'on peut afficher par pays (inflation, chômage, PIB). */
 export function hasCountries(row: string): boolean {
   return COUNTRY_ROWS.includes(row);
 }

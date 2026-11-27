@@ -19,8 +19,24 @@ export function formatNumber(value: number, decimals: number, signed = false): s
   );
 }
 
-/** « 2026-11-21 » ou « 2026-10 » → Date locale (sans décalage de fuseau). */
+/** Trimestre d'une période « 2026-Q3 » (→ [2026, 3]) ; undefined pour un jour ou un mois. */
+function quarterOf(period: string): [number, number] | undefined {
+  const match = /^(\d{4})-Q([1-4])$/.exec(period.trim());
+  return match ? [Number(match[1]), Number(match[2])] : undefined;
+}
+
+/** Vrai pour une période trimestrielle (« 2026-Q3 »). */
+export function isQuarter(period: string | undefined): boolean {
+  return period !== undefined && quarterOf(period) !== undefined;
+}
+
+/**
+ * « 2026-11-21 », « 2026-10 » ou « 2026-Q3 » (→ 1er jour du trimestre) → Date locale
+ * (sans décalage de fuseau).
+ */
 export function parsePeriod(period: string): Date | null {
+  const quarter = quarterOf(period);
+  if (quarter) return new Date(quarter[0], quarter[1] * 3 - 3, 1);
   const [y, m, d] = period.split("-").map(Number);
   if (!y || !m) return null;
   return new Date(y, m - 1, d || 1);
@@ -28,6 +44,8 @@ export function parsePeriod(period: string): Date | null {
 
 /** Date courte : « 23 nov. » / « 23 Nov » (année ajoutée si ce n'est pas l'année en cours), ou « oct. 2026 ». */
 export function formatPeriod(period: string, monthly: boolean): string {
+  const quarter = quarterOf(period);
+  if (quarter) return t().quarter(quarter[1], quarter[0]);
   const date = parsePeriod(period);
   if (!date) return period;
   if (monthly) {
@@ -43,6 +61,8 @@ export function formatPeriod(period: string, monthly: boolean): string {
 
 /** Date complète : « 23 nov. 2026 » (ou « oct. 2026 » pour une série mensuelle). */
 export function formatFullPeriod(period: string, monthly: boolean): string {
+  const quarter = quarterOf(period);
+  if (quarter) return t().quarter(quarter[1], quarter[0]);
   const date = parsePeriod(period);
   if (!date) return period;
   return new Intl.DateTimeFormat(locale(), {
@@ -64,7 +84,10 @@ export function formatValue(value: number, display: Display, decimals = display.
   }
 }
 
-/** Variation sur 1 mois : en points pour un taux, en % pour un cours de change. */
+/**
+ * Variation sur 1 mois (1 trimestre pour le PIB) : en points pour un taux, en % pour un cours
+ * de change.
+ */
 export function formatChange(indicator: IndicatorView, display: Display): string {
   const { latest, reference } = indicator;
   if (!latest || !reference) return "";
@@ -79,9 +102,11 @@ export function formatChange(indicator: IndicatorView, display: Display): string
         : [(latest.value / reference.value - 1) * 100, 1, text.percent];
 
   // Variation trop petite pour être visible à l'arrondi : « stable ».
-  if (Math.abs(change) < 0.5 * 10 ** -decimals) return text.stable;
+  const quarterly = isQuarter(latest.date);
+  if (Math.abs(change) < 0.5 * 10 ** -decimals) return quarterly ? text.stableQuarter : text.stable;
 
-  return text.change(unit(formatNumber(change, decimals, true)));
+  const shown = unit(formatNumber(change, decimals, true));
+  return quarterly ? text.changeQuarter(shown) : text.change(shown);
 }
 
 /**
@@ -147,5 +172,6 @@ export function formatUpdate(ms: number): { today: boolean; text: string } {
 export function formatDataDate(indicator: IndicatorView, display: Display): string {
   if (indicator.since) return t().effectiveSince(formatFullPeriod(indicator.since, false));
   if (!indicator.latest) return "";
+  if (isQuarter(indicator.latest.date)) return t().dataOfQuarter(formatFullPeriod(indicator.latest.date, true));
   return t().dataOf(formatFullPeriod(indicator.latest.date, display.monthly), display.monthly);
 }

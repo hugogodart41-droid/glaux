@@ -6,7 +6,7 @@
 // Vue détail et image acceptent plusieurs courbes (ex. écarts France, Italie, Espagne) :
 // une seule courbe garde l'aire dorée ; plusieurs courbes sont tracées chacune dans sa couleur.
 
-import { formatNumber, formatValue, parsePeriod } from "./format";
+import { formatNumber, formatValue, isQuarter, parsePeriod } from "./format";
 import { locale, t } from "./i18n";
 import type { Display } from "./indicators";
 import type { Observation } from "./types";
@@ -177,9 +177,12 @@ export function timeLabels(dates: string[], months: number): { index: number; te
     previousKey = key;
     if (isFirst) return; // pas d'étiquette sur l'année ou le mois déjà entamé
     if (!byYear && date.getMonth() % 3 !== 0) return;
+    // Série trimestrielle (PIB) sur 1 an : « T3 » plutôt que le premier mois du trimestre.
     const text = byYear
       ? String(date.getFullYear())
-      : new Intl.DateTimeFormat(locale(), { month: "short" }).format(date);
+      : isQuarter(period)
+        ? t().quarter(date.getMonth() / 3 + 1, date.getFullYear()).split(" ")[0]
+        : new Intl.DateTimeFormat(locale(), { month: "short" }).format(date);
     labels.push({ index, text });
   });
   return labels;
