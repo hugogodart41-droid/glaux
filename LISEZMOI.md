@@ -38,7 +38,7 @@ Portugal, Belgique, Pays-Bas ; jeu `IRS`, statistiques de convergence : moyennes
 - Taux à 10 ans par pays (V3) : une ligne (« groupe » `yields`) pour 3 pays au plus, choisis par l'utilisateur
   (Allemagne, France, Italie par défaut), en %, variation en points ; juste après « Taux souverain 10 ans »
   (moyenne quotidienne de la zone euro), courbes superposées en vue détail et à l'export.
-- PIB (v0.6) : croissance en volume sur 1 trimestre (`gdp_qoq`, affichée) et sur 1 an (`gdp_yoy`, masquée par
+- PIB (v0.5) : croissance en volume sur 1 trimestre (`gdp_qoq`, affichée) et sur 1 an (`gdp_yoy`, masquée par
   défaut), jeu `MNA` (comptes nationaux d'Eurostat), CVS-CJO, zone euro ou un des 8 pays. **Trimestriel** :
   dates « 2026-Q3 » (`Frequency::Quarterly` dans `data.rs`), affichées « T3 2026 » / « Q3 2026 », variation
   « sur 1 trimestre ». Zone euro = `I10` (21 pays à composition fixe, Bulgarie comprise depuis le 1er janvier
@@ -277,5 +277,5 @@ Version de l'app : `package.json` (une seule source ; `publier.command` l'augmen
 10. V3 : plus de données BCE, courbe des taux AAA, panneau agrandi, rubriques et indicateurs par pays (v0.3.0),
     carrousel LinkedIn, fiabilité (DMG universel, calendrier publié, clic sur notification, mises à jour
     toutes les 6 h, actualisation 2,5 fois plus rapide) (v0.4.0)
-11. Note macro mensuelle : faits du mois, analyse, post LinkedIn, PDF 4:5 (v0.5.0)
-12. PIB par pays : première série trimestrielle (zone euro à 21 + 8 pays) ← **ici** (v0.6.0 à publier)
+11. Note macro mensuelle (faits du mois, analyse, post LinkedIn, PDF 4:5) et PIB par pays (première série
+    trimestrielle : zone euro à 21 + 8 pays) ← **ici** (v0.5.0)
